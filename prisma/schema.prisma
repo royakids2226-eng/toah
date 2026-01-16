@@ -1,0 +1,107 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model products {
+  unique_id     String    @id @db.VarChar(50)
+  master_code   String?   @db.VarChar(100)
+  item_code     String?   @db.VarChar(100)
+  item_name     String?   @db.VarChar(255)
+  color         String?   @db.VarChar(255)
+  size          String?   @db.VarChar(255)
+  item_id       Int?
+  type_id       Int?
+  unit_id       Int?
+  unit_convert  Float?    @db.DoublePrecision
+  multi_unit    Boolean?
+  multi_type    Boolean?
+  unit_def1_id  Int?
+  cur_qty       Decimal?  @db.Decimal(18, 3)
+  group_id      Int?
+  class_id      Int?
+  is_basic_unit Boolean?
+  class_name    String?   @db.VarChar(200)
+  kind_id       Int?
+  place_id      Int?
+  unit_name_id  Int?
+  unit_name     String?   @db.VarChar(200)
+  av_price      Decimal?  @db.Decimal(19, 4)
+  out_price     Decimal?  @db.Decimal(19, 4)
+  stor_id       Int?
+  group_name    String?   @db.VarChar(200)
+  kind_name     String?   @db.VarChar(200)
+  place_name    String?   @db.VarChar(200)
+  images        String?   @db.Text
+}
+
+model categories {
+  id       Int      @id @default(autoincrement())
+  name     String   @unique @db.VarChar(255)
+  image    String?  @db.Text
+  kind     String   @db.VarChar(100)
+  sub      String?  @db.VarChar(100)
+}
+
+model orders {
+  id            String      @id
+  customer_name String      @db.VarChar(255)
+  address       String      @db.Text
+  phone         String      @db.VarChar(50)
+  total_price   Decimal     @db.Decimal(19, 4)
+  status        String      @default("جاري")
+  printed_by    String?     @db.VarChar(255)
+  printed_at    DateTime?
+  exported_by   String?     @db.VarChar(255)
+  exported_at   DateTime?
+  timestamp     DateTime    @default(now())
+  order_items   order_items[]
+}
+
+model order_items {
+  id          Int     @id @default(autoincrement())
+  order_id    String
+  product     String  @db.Text
+  quantity    Int
+  price       Decimal @db.Decimal(19, 4)
+  color       String? @db.VarChar(100)
+  item_code   String? @db.VarChar(100)
+  
+  order orders @relation(fields: [order_id], references: [id])
+}
+
+model users {
+  userid       Int      @id @default(autoincrement())
+  usercode     String   @unique @db.VarChar(50)
+  username     String   @db.VarChar(100)
+  password     String   @db.VarChar(255)
+  phone        String?  @db.VarChar(20)
+  position     String   @db.VarChar(50) @default("عميل")
+  permissions  String   @db.VarChar(500)
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  @@map("users")
+}
+
+model company_info {
+  id              Int     @id @default(autoincrement())
+  company_name    String  @db.VarChar(255)
+  address         String? @db.Text
+  logo            String? @db.Text
+  email           String? @db.VarChar(255)
+  facebook_url    String? @db.VarChar(500)
+  instagram_url   String? @db.VarChar(500)
+  tiktok_url     String? @db.VarChar(500)
+  phone1          String? @db.VarChar(20)
+  phone2          String? @db.VarChar(20)
+  phone3          String? @db.VarChar(20)
+  terms_conditions String? @db.Text
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+}

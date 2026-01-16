@@ -1,0 +1,96 @@
+import { NextResponse } from "next/server";
+import { PrismaClient } from "@prisma/client";
+
+const prisma = new PrismaClient();
+
+// Define types for better TypeScript support
+interface OrderItem {
+  product: string;
+  color?: string;
+  size?: string; // ✅ إضافة size
+  quantity: number;
+  price: number;
+  item_code?: string;
+}
+
+interface OrderRequest {
+  customer_name: string;
+  address: string;
+  phone: string;
+  items: OrderItem[];
+  total_price: number;
+}
+
+export async function POST(request: Request) {
+  try {
+    // 1. Parse the incoming order data from the request body
+    const orderData: OrderRequest = await request.json();
+
+    // 2. Validate the data
+    if (
+      !orderData ||
+      !orderData.customer_name ||
+      !orderData.address ||
+      !orderData.phone ||
+      !orderData.items ||
+      orderData.items.length === 0
+    ) {
+      return NextResponse.json(
+        { success: false, error: "بيانات الطلب غير مكتملة أو غير صحيحة." },
+        { status: 400 }
+      );
+    }
+
+    const { customer_name, address, phone, items, total_price } = orderData;
+    const newOrderId = "ORD-" + new Date().getTime(); // Generate a unique order ID
+
+    // ✅ تعديل: دمج اسم المنتج + اللون + المقاس في عمود product
+    const orderItemsWithMergedNames = items.map((item) => ({
+      ...item,
+      // دمج اسم المنتج مع اللون والمقاس
+      product: `${item.product} - اللون: ${item.color || "غير محدد"} - المقاس: ${item.size || "غير محدد"}`,
+    }));
+
+    // 3. Use a Prisma transaction to save everything safely
+    await prisma.$transaction(async (tx) => {
+      // Create the main order record
+      await tx.orders.create({
+        data: {
+          id: newOrderId,
+          customer_name: customer_name,
+          address: address,
+          phone: phone,
+          total_price: total_price,
+        },
+      });
+
+      // Create the associated order items
+      for (const item of orderItemsWithMergedNames) { // ✅ استخدام البيانات المدمجة
+        await tx.order_items.create({
+          data: {
+            order_id: newOrderId,
+            product: item.product, // ✅ الآن يحتوي على الاسم + اللون + المقاس
+            quantity: item.quantity,
+            price: item.price,
+            color: item.color || "",
+            item_code: item.item_code || "",
+          },
+        });
+      }
+    });
+
+    // 4. Send a success response back to the client
+    return NextResponse.json({
+      success: true,
+      orderId: newOrderId,
+      message: "تم استلام طلبك بنجاح! رقم الطلب: " + newOrderId,
+    });
+  } catch (error) {
+    console.error("Error in saveOrder API:", error);
+    // In case of an error, send a generic error message
+    return NextResponse.json(
+      { success: false, error: "فشل في حفظ الطلب." },
+      { status: 500 }
+    );
+  }
+}

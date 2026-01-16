@@ -1,0 +1,58 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-family: Arial, Helvetica, sans-serif;
+  /* ✅ الحل الحاسم - أضف هذه السطور */
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+  overflow-y: auto;
+  position: relative;
+}
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+  /* ✅ إصلاح السكرول */
+  -webkit-overflow-scrolling: touch;
+  overflow: auto;
+  height: 100%;
+}
+
+/* ✅ حل جذري للموبايل */
+@media (max-width: 768px) {
+  html {
+    height: 100%;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  body {
+    height: 100%;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+    position: relative;
+    overscroll-behavior: none;
+  }
+}
