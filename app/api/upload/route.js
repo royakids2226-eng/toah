@@ -5,9 +5,8 @@ import { v4 as uuidv4 } from 'uuid';
 
 const prisma = new PrismaClient();
 
-// 🔥 التعديل هنا: تغيير المنطقة إلى "us-east-1" لحل مشكلة x-id
 const r2 = new S3Client({
-  region: "us-east-1", // 👈 هذا هو الحل السحري (كان auto سابقاً)
+  region: "auto",
   endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
   credentials: {
     accessKeyId: process.env.R2_ACCESS_KEY_ID,
@@ -32,7 +31,9 @@ export async function POST(request) {
         
         const originalName = file.name;
         const itemCodeFromFileName = originalName.substring(0, originalName.lastIndexOf('.'));
-        const safeFileName = sanitizeFileName(originalName);
+        
+        // تنظيف اسم الملف
+        const safeFileName = originalName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9.\-_]/g, '');
         const r2Key = `${uuidv4()}-${safeFileName}`;
 
         const uploadCommand = new PutObjectCommand({
@@ -109,10 +110,4 @@ export async function POST(request) {
     console.error("Global Upload Error:", error);
     return NextResponse.json({ success: false, error: "فشل في عملية الرفع: " + error.message }, { status: 500 });
   }
-}
-
-function sanitizeFileName(fileName) {
-  return fileName
-    .replace(/\s+/g, '-')
-    .replace(/[^a-zA-Z0-9.\-_]/g, '');
 }
