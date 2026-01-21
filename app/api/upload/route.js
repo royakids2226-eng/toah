@@ -5,13 +5,13 @@ import { v4 as uuidv4 } from 'uuid';
 
 const prisma = new PrismaClient();
 
-// 🔥 التعديل: تثبيت المنطقة والرابط مباشرة
+// 🔥 قمت بوضع مفاتيحك الصحيحة هنا مباشرة لحل مشكلة التوقيع
 const r2 = new S3Client({
-  region: "us-east-1", // 👈 R2 يتطلب هذه المنطقة لضبط التوقيع
-  endpoint: "https://71d79ed120aa922c04d1f1263131413f.r2.cloudflarestorage.com", // 👈 كتبنا الرابط مباشرة
+  region: "auto",
+  endpoint: "https://71d79ed120aa922c04d1f1263131413f.r2.cloudflarestorage.com",
   credentials: {
-    accessKeyId: process.env.R2_ACCESS_KEY_ID,
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+    accessKeyId: "d906ac7cd50bffaf6d93a3772bc87b5a",
+    secretAccessKey: "16c78fa346fe72aa1899148c36d5e3204c1e76db99e866718707bbddf064ec9"
   },
 });
 
@@ -32,13 +32,11 @@ export async function POST(request) {
         
         const originalName = file.name;
         const itemCodeFromFileName = originalName.substring(0, originalName.lastIndexOf('.'));
-        
-        // تنظيف الاسم
         const safeFileName = originalName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9.\-_]/g, '');
         const r2Key = `${uuidv4()}-${safeFileName}`;
 
         const uploadCommand = new PutObjectCommand({
-          Bucket: "matgar1", // 👈 مثبت يدوياً
+          Bucket: "matgar1",
           Key: r2Key,
           Body: buffer,
           ContentType: file.type,
@@ -46,7 +44,7 @@ export async function POST(request) {
 
         await r2.send(uploadCommand);
 
-        // رابط الصورة
+        // هنا نستخدم المتغير العام للرابط فقط لأنه لا يؤثر على الرفع
         const imageUrl = `${process.env.R2_PUBLIC_URL}/${r2Key}`;
 
         const product = await prisma.products.findFirst({
