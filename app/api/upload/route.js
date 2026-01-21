@@ -5,9 +5,9 @@ import { v4 as uuidv4 } from 'uuid';
 
 const prisma = new PrismaClient();
 
-// 🔥 قمت بوضع مفاتيحك الصحيحة هنا مباشرة لحل مشكلة التوقيع
+// 🔥 التعديل النهائي: تغيير المنطقة إلى us-east-1
 const r2 = new S3Client({
-  region: "auto",
+  region: "us-east-1", // 👈 هذا ضروري جداً لحل مشكلة Signature
   endpoint: "https://71d79ed120aa922c04d1f1263131413f.r2.cloudflarestorage.com",
   credentials: {
     accessKeyId: "d906ac7cd50bffaf6d93a3772bc87b5a",
@@ -44,7 +44,6 @@ export async function POST(request) {
 
         await r2.send(uploadCommand);
 
-        // هنا نستخدم المتغير العام للرابط فقط لأنه لا يؤثر على الرفع
         const imageUrl = `${process.env.R2_PUBLIC_URL}/${r2Key}`;
 
         const product = await prisma.products.findFirst({
