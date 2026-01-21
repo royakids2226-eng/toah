@@ -5,13 +5,16 @@ import { v4 as uuidv4 } from 'uuid';
 
 const prisma = new PrismaClient();
 
-// 🔥 التعديل النهائي: تغيير المنطقة إلى us-east-1
+// 🔥 إعدادات الاتصال النهائية بالمفاتيح الصحيحة 🔥
 const r2 = new S3Client({
-  region: "us-east-1", // 👈 هذا ضروري جداً لحل مشكلة Signature
+  region: "auto",
   endpoint: "https://71d79ed120aa922c04d1f1263131413f.r2.cloudflarestorage.com",
   credentials: {
-    accessKeyId: "d906ac7cd50bffaf6d93a3772bc87b5a",
-    secretAccessKey: "16c78fa346fe72aa1899148c36d5e3204c1e76db99e866718707bbddf064ec9"
+    // ✅ هذا هو المفتاح الذي أرسلته للتو (32 حرف)
+    accessKeyId: "ebf0d81a030d46a76f5f74b0d9365468",
+    
+    // ✅ هذا هو المفتاح السري الذي أرسلته سابقاً
+    secretAccessKey: "5a226a4906efb64fbe6c76b72127d43de6908515820388ea2656ea199b55acca",
   },
 });
 
@@ -31,21 +34,30 @@ export async function POST(request) {
         const buffer = Buffer.from(await file.arrayBuffer());
         
         const originalName = file.name;
+        // استخراج الكود (مثلاً 1001.jpg -> 1001)
         const itemCodeFromFileName = originalName.substring(0, originalName.lastIndexOf('.'));
+        
+        // تنظيف اسم الملف
         const safeFileName = originalName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9.\-_]/g, '');
+        // اسم فريد في R2
         const r2Key = `${uuidv4()}-${safeFileName}`;
 
         const uploadCommand = new PutObjectCommand({
-          Bucket: "matgar1",
+          Bucket: "matgar1", // اسم الباكت
           Key: r2Key,
           Body: buffer,
           ContentType: file.type,
         });
 
+        // 🚀 تنفيذ الرفع
         await r2.send(uploadCommand);
 
-        const imageUrl = `${process.env.R2_PUBLIC_URL}/${r2Key}`;
+        // رابط الصورة للعرض
+        // (استخدمنا الرابط العام الذي أرسلته سابقاً)
+        const publicDomain = "https://pub-3ff77cba2e6f472094c4271d8b4e68a9.r2.dev";
+        const imageUrl = `${publicDomain}/${r2Key}`;
 
+        // البحث عن المنتج وتحديثه
         const product = await prisma.products.findFirst({
           where: { 
             OR: [
@@ -89,6 +101,7 @@ export async function POST(request) {
       }
     }
 
+    // الرد بتنسيق يناسب الفرونت إند الحالي
     if (files.length === 1) {
         return NextResponse.json({
             success: results[0].success,
