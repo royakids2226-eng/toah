@@ -23,7 +23,7 @@ interface Product {
     totalColorQuantity?: number;
     sizeQuantities?: { [size: string]: number };
   }>;
-  cur_qty?: number; // ✅ هذا هو الحقل الذي يجب استخدامه
+  cur_qty?: number;
   stor_id?: number;
   item_code?: string;
   unique_id?: string;
@@ -40,12 +40,21 @@ export default function ProductCard({ product }: ProductCardProps) {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [isHovered, setIsHovered] = useState(false);
   const { isEmployee } = useAuth();
+  
+  // ✅ الحالة الافتراضية للكمية يجب أن تكون null ليتم حسابها لاحقاً
   const [currentQuantity, setCurrentQuantity] = useState<number | null>(null);
 
-  // ✅ جلب كميات الموظف عند تحميل المكون - مبسط
+  // 🔥 1. حساب إجمالي المخزون من جميع الألوان المتاحة في البيانات
+  // هذا يضمن أن الكارت يظهر "متوفر" إذا كان أي لون يحتوي على كمية
+  const totalStock = product.variants.reduce((acc, variant) => acc + (variant.cur_qty || 0), 0);
+
+  // ✅ جلب كميات الموظف عند تحميل المكون
   useEffect(() => {
     const fetchEmployeeQuantities = async () => {
-      if (!isEmployee || currentQuantity !== null) return;
+      if (!isEmployee) return;
+
+      // إذا كنا قد حددنا كمية يدوياً (بالضغط على لون)، لا تقم بالجلب
+      if (currentQuantity !== null) return;
 
       try {
         const cacheKey = `${product.modelId}`;
@@ -54,55 +63,62 @@ export default function ProductCard({ product }: ProductCardProps) {
           return;
         }
 
-        console.log(`📥 جلب كمية المنتج: ${product.modelId}`);
-
-        // ✅ استخدام API المنتجات مع معلمة employee
+        // ✅ استخدام API المنتجات لجلب أحدث البيانات
         const response = await fetch(`/api/products?employee=true&search=${product.master_code || product.modelId}`);
 
         if (response.ok) {
           const data = await response.json();
           const productsList = data.products || [];
 
-          // ✅ البحث عن المنتج الحالي في البيانات
           const employeeProduct = productsList.find(
             (p: Product) => p.modelId === product.modelId
           );
 
           if (employeeProduct) {
-            // ✅ استخدام cur_qty المباشر من المنتج المجمع
+            // نستخدم الكمية القادمة من السيرفر، أو نستخدم المجموع المحسوب
             const quantity = employeeProduct.cur_qty || 0;
-            setCurrentQuantity(quantity);
-            employeeQuantitiesCache.set(cacheKey, quantity);
-            console.log(`✅ كمية المنتج ${product.modelId}: ${quantity}`);
+            
+            // 🔥 تعديل: إذا كانت كمية السيرفر 0 ولكن لدينا مجموع محلي > 0، نستخدم المجموع المحلي
+            // هذا يحل مشكلة ظهور "غير متوفر" بينما توجد ألوان
+            const finalQty = (quantity === 0 && totalStock > 0) ? totalStock : quantity;
+
+            setCurrentQuantity(finalQty);
+            employeeQuantitiesCache.set(cacheKey, finalQty);
           } else {
-            // ✅ إذا لم يجد المنتج، فهو غير متوفر للموظف
-            setCurrentQuantity(0);
-            employeeQuantitiesCache.set(cacheKey, 0);
-            console.log(`⚠️ المنتج ${product.modelId} غير موجود في كميات الموظف`);
+            // إذا لم يجد المنتج ولكن لدينا مخزون في الألوان، نعرض مخزون الألوان
+            const fallbackQty = totalStock > 0 ? totalStock : 0;
+            setCurrentQuantity(fallbackQty);
+            employeeQuantitiesCache.set(cacheKey, fallbackQty);
           }
         }
       } catch (error) {
         console.warn("⚠️ لا يمكن جلب كميات الموظف:", error);
-        // ✅ عند الخطأ، استخدم cur_qty المحلي
-        setCurrentQuantity(product.cur_qty || 0);
+        // عند الخطأ، استخدم المجموع المحسوب
+        setCurrentQuantity(totalStock);
       }
     };
 
     if (isEmployee) {
       fetchEmployeeQuantities();
     }
-  }, [isEmployee, product.modelId, product.master_code, product.cur_qty]);
+  }, [isEmployee, product.modelId, product.master_code, totalStock, currentQuantity]);
 
-  // ✅ الحصول على الكمية للعرض - مبسط
+  // ✅ الحصول على الكمية للعرض
   const getDisplayQuantity = () => {
     if (!isEmployee) return null;
 
-    // ✅ إذا كان لدينا كمية محدثة من API
+    // 1. إذا تم تحديد كمية (سواء من الـ API أو عند اختيار لون)، اعرضها
     if (currentQuantity !== null) {
       return currentQuantity;
     }
 
-    // ✅ استخدام cur_qty مباشرة من المنتج
+    // 2. 🔥 الحل الجذري: إذا لم تكن هناك كمية محددة، اعرض إجمالي مخزون كل الألوان
+    // بدلاً من الاعتماد على product.cur_qty الذي قد يكون صفراً
+    if (totalStock > 0) {
+      return totalStock;
+    }
+
+    // 3. الملجأ الأخير
     return product.cur_qty || 0;
   };
 
@@ -117,7 +133,6 @@ export default function ProductCard({ product }: ProductCardProps) {
     product.variants[currentImageIndex]?.imageUrl ||
     "https://via.placeholder.com/270x360/FFFFFF/666666?text=No+Image";
 
-  // ✅ تحديد لون حالة الكمية
   const getQuantityColor = (qty: number | null) => {
     if (qty === null) return "bg-blue-100 text-blue-800 border-blue-200";
     if (qty === 0) return "bg-red-100 text-red-800 border-red-200";
@@ -125,7 +140,6 @@ export default function ProductCard({ product }: ProductCardProps) {
     return "bg-green-100 text-green-800 border-green-200";
   };
 
-  // ✅ تحديد نص حالة الكمية
   const getQuantityText = (qty: number | null) => {
     if (qty === null) return "📥 جاري التحقق...";
     if (qty === 0) return "⛔ غير متوفر";
@@ -133,26 +147,15 @@ export default function ProductCard({ product }: ProductCardProps) {
     return `✅ متوفر (${qty})`;
   };
 
-  // دالة لتحويل اسم اللون إلى قيمة hex
   const getColorHex = (colorName: string) => {
     const colorMap: { [key: string]: string } = {
-      أحمر: "#ef4444",
-      أخضر: "#22c55e",
-      أزرق: "#3b82f6",
-      أصفر: "#eab308",
-      وردي: "#ec4899",
-      بنفسجي: "#8b5cf6",
-      برتقالي: "#f97316",
-      أسود: "#000000",
-      أبيض: "#ffffff",
-      رمادي: "#6b7280",
-      بني: "#a16207",
-      ذهبي: "#f59e0b",
-      فضي: "#94a3b8",
-      كريم: "#fef3c7",
-      سكري: "#f0f9ff",
-      نيون: "#4ade80",
-      تركواز: "#06b6d4",
+      أحمر: "#ef4444", أخضر: "#22c55e", أزرق: "#3b82f6", أصفر: "#eab308",
+      وردي: "#ec4899", بنفسجي: "#8b5cf6", برتقالي: "#f97316", أسود: "#000000",
+      أبيض: "#ffffff", رمادي: "#6b7280", بني: "#a16207", ذهبي: "#f59e0b",
+      فضي: "#94a3b8", كريم: "#fef3c7", سكري: "#f0f9ff", نيون: "#4ade80",
+      تركواز: "#06b6d4", كحلي: "#1e3a8a", زيتي: "#3f6212", بيج: "#f5f5dc",
+      نبيتي: "#800000", رصاصي: "#71717a", "سيمون": "#ff7f50", "موف": "#a855f7",
+      "جنزاري": "#008b8b", "كشمير": "#e6a8d7", "هافان": "#cd7f32", "مسطردة": "#ffdb58"
     };
     return colorMap[colorName] || "#6b7280";
   };
@@ -164,7 +167,6 @@ export default function ProductCard({ product }: ProductCardProps) {
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      {/* ✅ الصورة مع تأثيرات متقدمة */}
       <div className="relative aspect-[3/4] overflow-hidden bg-gray-50">
         <img
           src={mainImage}
@@ -173,7 +175,6 @@ export default function ProductCard({ product }: ProductCardProps) {
           loading="lazy"
         />
 
-        {/* ✅ شارة الكمية للموظفين فقط */}
         {isEmployee && (
           <div
             className={`absolute top-3 left-3 px-3 py-1.5 rounded-full text-xs font-semibold border ${getQuantityColor(
@@ -184,7 +185,6 @@ export default function ProductCard({ product }: ProductCardProps) {
           </div>
         )}
 
-        {/* ✅ شريط الألوان العائم - تصميم عصري */}
         {product.variants.length > 1 && (
           <div
             className={`absolute bottom-4 left-4 right-4 transition-all duration-300 ${
@@ -195,7 +195,6 @@ export default function ProductCard({ product }: ProductCardProps) {
           >
             <div className="bg-white/95 backdrop-blur-md rounded-2xl px-4 py-3 shadow-xl border border-white/20">
               <div className="flex flex-col space-y-2">
-                {/* عنوان الألوان */}
                 <div className="flex justify-between items-center">
                   <span className="text-xs font-semibold text-gray-700">
                     الألوان المتاحة:
@@ -205,7 +204,6 @@ export default function ProductCard({ product }: ProductCardProps) {
                   </span>
                 </div>
 
-                {/* دوائر الألوان */}
                 <div className="flex justify-center space-x-3">
                   {product.variants.slice(0, 5).map((variant, index) => (
                     <button
@@ -215,15 +213,10 @@ export default function ProductCard({ product }: ProductCardProps) {
                         e.stopPropagation();
                         setCurrentImageIndex(index);
 
-                        // ✅ عند تغيير اللون، أعد تعيين الكمية
+                        // 🔥 تعديل هام: عند تغيير اللون، نعرض كمية هذا اللون فوراً
                         if (isEmployee) {
-                          setCurrentQuantity(null);
-                          const cacheKey = `${product.modelId}-${variant.color}`;
-                          if (employeeQuantitiesCache.has(cacheKey)) {
-                            setCurrentQuantity(
-                              employeeQuantitiesCache.get(cacheKey) || null
-                            );
-                          }
+                          const variantQty = variant.cur_qty || 0;
+                          setCurrentQuantity(variantQty);
                         }
                       }}
                       className={`relative group/color transition-all duration-300 ${
@@ -232,7 +225,6 @@ export default function ProductCard({ product }: ProductCardProps) {
                           : "hover:scale-110"
                       }`}
                     >
-                      {/* دائرة اللون مع تأثير ظل */}
                       <div
                         className={`w-7 h-7 rounded-full border-2 transition-all duration-300 shadow-md ${
                           currentImageIndex === index
@@ -244,12 +236,10 @@ export default function ProductCard({ product }: ProductCardProps) {
                         }}
                       />
 
-                      {/* تأكيد الاختيار */}
                       {currentImageIndex === index && (
                         <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-white shadow-sm" />
                       )}
 
-                      {/* تلميح اسم اللون */}
                       <div className="absolute bottom-full mb-2 left-1/2 transform -translate-x-1/2 opacity-0 group-hover/color:opacity-100 transition-opacity duration-200 pointer-events-none">
                         <div className="bg-gray-900 text-white text-xs px-2 py-1 rounded-md whitespace-nowrap">
                           {variant.color}
@@ -264,7 +254,6 @@ export default function ProductCard({ product }: ProductCardProps) {
                     </button>
                   ))}
 
-                  {/* عرض عدد الألوان الإضافية */}
                   {product.variants.length > 5 && (
                     <div className="flex items-center">
                       <span className="text-xs text-gray-500 font-medium bg-gray-100 px-2 py-1 rounded-full">
@@ -279,9 +268,7 @@ export default function ProductCard({ product }: ProductCardProps) {
         )}
       </div>
 
-      {/* ✅ محتوى البطاقة */}
       <div className="p-4 flex-1 flex flex-col">
-        {/* العنوان والسعر */}
         <div className="flex justify-between items-start mb-3">
           <h3 className="text-sm font-semibold text-gray-900 line-clamp-2 flex-1 pr-2 leading-tight">
             {getProductName()}
@@ -293,7 +280,6 @@ export default function ProductCard({ product }: ProductCardProps) {
           </div>
         </div>
 
-        {/* الفئة وعدد الألوان */}
         <div className="flex justify-between items-center text-xs text-gray-500 mb-4">
           <span className="truncate bg-gray-100 px-2 py-1 rounded-full">
             {product.category}
@@ -318,7 +304,6 @@ export default function ProductCard({ product }: ProductCardProps) {
           )}
         </div>
 
-        {/* المقاسات */}
         {product.variants[0]?.sizes && product.variants[0].sizes.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mb-4">
             {product.variants[0].sizes.slice(0, 4).map((size) => (
@@ -337,7 +322,6 @@ export default function ProductCard({ product }: ProductCardProps) {
           </div>
         )}
 
-        {/* ✅ معلومات الكمية الإضافية للموظف */}
         {isEmployee && availableQuantity !== null && (
           <div className="mt-2 mb-3">
             <div
@@ -357,7 +341,6 @@ export default function ProductCard({ product }: ProductCardProps) {
           </div>
         )}
 
-        {/* ✅ زر عرض التفاصيل */}
         <Link
           href={`/product/${product.modelId}`}
           className="mt-auto w-full py-3 px-4 rounded-xl text-sm font-semibold transition-all duration-300 flex items-center justify-center space-x-2 space-x-reverse shadow-md hover:shadow-lg transform hover:translate-y-[-1px] active:translate-y-0 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white"
