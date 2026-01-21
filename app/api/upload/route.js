@@ -5,15 +5,14 @@ import { v4 as uuidv4 } from 'uuid';
 
 const prisma = new PrismaClient();
 
+// 🔥 التعديل: تثبيت المنطقة والرابط مباشرة
 const r2 = new S3Client({
-  region: "auto",
-  endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+  region: "us-east-1", // 👈 R2 يتطلب هذه المنطقة لضبط التوقيع
+  endpoint: "https://71d79ed120aa922c04d1f1263131413f.r2.cloudflarestorage.com", // 👈 كتبنا الرابط مباشرة
   credentials: {
     accessKeyId: process.env.R2_ACCESS_KEY_ID,
     secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
   },
-  // هذه الخاصية ضرورية لـ Cloudflare R2
-  forcePathStyle: true, 
 });
 
 export async function POST(request) {
@@ -34,13 +33,12 @@ export async function POST(request) {
         const originalName = file.name;
         const itemCodeFromFileName = originalName.substring(0, originalName.lastIndexOf('.'));
         
-        // تنظيف اسم الملف
+        // تنظيف الاسم
         const safeFileName = originalName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9.\-_]/g, '');
         const r2Key = `${uuidv4()}-${safeFileName}`;
 
         const uploadCommand = new PutObjectCommand({
-          // 👇 هنا التعديل: كتبنا الاسم مباشرة لضمان العمل
-          Bucket: 'matgar1', 
+          Bucket: "matgar1", // 👈 مثبت يدوياً
           Key: r2Key,
           Body: buffer,
           ContentType: file.type,
@@ -48,6 +46,7 @@ export async function POST(request) {
 
         await r2.send(uploadCommand);
 
+        // رابط الصورة
         const imageUrl = `${process.env.R2_PUBLIC_URL}/${r2Key}`;
 
         const product = await prisma.products.findFirst({
