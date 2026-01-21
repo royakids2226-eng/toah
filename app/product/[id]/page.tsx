@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, use } from "react";
+import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import Header from "@/app/components/Header";
 import ProductCard from "@/app/components/ProductCard";
@@ -66,16 +66,11 @@ export default function ProductDetail() {
 
   const employee = isEmployee();
 
-  // ✅ دالة جلب تفاصيل المنتج - مُحسّنة
+  // ✅ دالة جلب تفاصيل المنتج
   const fetchProductDetails = async () => {
     try {
       setLoading(true);
-      console.log(`🔍 جلب تفاصيل المنتج: ${productId}`);
-      console.log(`👤 حالة الموظف: ${employee}`);
-
-      // ✅ استخدام getAllData مع معلمة employee
       const endpoint = employee ? "/api/getAllData?employee=true" : "/api/getAllData";
-      console.log(`🌐 جلب البيانات من: ${endpoint}`);
 
       const response = await fetch(endpoint);
 
@@ -90,12 +85,10 @@ export default function ProductDetail() {
       }
       
       const productsList: Product[] = data.products || [];
-      console.log(`📦 المنتجات الأساسية: ${productsList.length} منتج`);
 
       // ✅ البحث عن المنتج الحالي
       let foundProduct: Product | undefined;
 
-      // البحث بطرق مختلفة
       foundProduct = productsList.find((p) => p.modelId === productId);
 
       if (!foundProduct) {
@@ -107,21 +100,6 @@ export default function ProductDetail() {
       }
 
       if (foundProduct) {
-        console.log(`✅ وجدت المنتج: ${foundProduct.description}`);
-        console.log(`📊 الكمية الإجمالية: ${foundProduct.cur_qty}`);
-
-        // ✅ تسجيل تفاصيل المتغيرات
-        if (foundProduct.variants) {
-          console.log(`🎨 الألوان المتاحة: ${foundProduct.variants.length}`);
-          foundProduct.variants.forEach((variant, index) => {
-            console.log(`  ${index + 1}. ${variant.color}`);
-            console.log(`     itemCode: ${variant.itemCode}`);
-            console.log(`     الكمية: ${variant.cur_qty}`);
-            console.log(`     المقاسات: ${variant.sizes?.join(', ') || 'لا توجد'}`);
-            console.log(`     sizeItemCodes:`, variant.sizeItemCodes || {});
-          });
-        }
-
         setProduct(foundProduct);
 
         // ✅ البحث عن المنتجات المشابهة
@@ -133,7 +111,6 @@ export default function ProductDetail() {
           )
           .slice(0, 4);
 
-        console.log(`🔍 المنتجات المشابهة: ${similar.length} منتج`);
         setSimilarProducts(similar);
 
         // ✅ تعيين القيم الافتراضية
@@ -141,26 +118,20 @@ export default function ProductDetail() {
           const firstVariant = foundProduct.variants[0];
           setSelectedColor(firstVariant.color);
           
-          // ✅ تعيين itemCode الافتراضي
           setCurrentItemCode(firstVariant.itemCode || foundProduct.item_code || "");
           
           if (firstVariant.sizes && firstVariant.sizes.length > 0) {
             const firstSize = firstVariant.sizes[0];
             setSelectedSize(firstSize);
-            
-            // ✅ تحديث itemCode بناءً على المقاس
-            updateItemCodeForSize(firstVariant, firstSize);
+            updateItemCodeForSize(firstVariant, firstSize, foundProduct); // تمرير المنتج كمعامل
           }
         }
-      } else {
-        console.log(`❌ المنتج غير موجود: ${productId}`);
       }
     } catch (error: any) {
       console.error("❌ Error fetching product:", error);
       
       // ✅ محاولة استخدام API المنتجات كحل بديل
       try {
-        console.log("🔄 محاولة استخدام API المنتجات كبديل...");
         const fallbackResponse = await fetch(`/api/products?search=${productId}&limit=50`);
         if (fallbackResponse.ok) {
           const fallbackData = await fallbackResponse.json();
@@ -172,7 +143,6 @@ export default function ProductDetail() {
           );
           
           if (foundProduct) {
-            console.log("✅ تم العثور على المنتج باستخدام API المنتجات");
             setProduct(foundProduct);
           }
         }
@@ -185,7 +155,7 @@ export default function ProductDetail() {
   };
 
   // ✅ دالة لتحديث itemCode بناءً على اللون والمقاس
-  const updateItemCodeForSize = (variant: any, size: string) => {
+  const updateItemCodeForSize = (variant: any, size: string, prod: Product | null = product) => {
     if (!variant) return;
     
     let newItemCode = "";
@@ -193,17 +163,14 @@ export default function ProductDetail() {
     // ✅ أولوية: itemCode الخاص بالمقاس
     if (variant.sizeItemCodes && variant.sizeItemCodes[size]) {
       newItemCode = variant.sizeItemCodes[size];
-      console.log(`📦 استخدام itemCode الخاص بالمقاس ${size}: ${newItemCode}`);
     }
     // ✅ ثانياً: itemCode العام للون
     else if (variant.itemCode) {
       newItemCode = variant.itemCode;
-      console.log(`🎨 استخدام itemCode العام للون ${variant.color}: ${newItemCode}`);
     }
     // ✅ أخيراً: itemCode العام للمنتج
-    else if (product?.item_code) {
-      newItemCode = product.item_code;
-      console.log(`📦 استخدام itemCode العام للمنتج: ${newItemCode}`);
+    else if (prod?.item_code) {
+      newItemCode = prod.item_code;
     }
     
     if (newItemCode && newItemCode !== currentItemCode) {
@@ -221,7 +188,7 @@ export default function ProductDetail() {
 
   // ✅ الحصول على الكمية الإجمالية للون
   const getTotalColorQuantity = (color: string) => {
-    if (!employee) return 999; // للعملاء: دائماً متوفر
+    if (!employee) return 999; 
 
     const variant = product?.variants?.find((v) => v.color === color);
     if (!variant) return 0;
@@ -231,7 +198,7 @@ export default function ProductDetail() {
 
   // ✅ الحصول على الكمية للمقاس المحدد
   const getSizeQuantity = () => {
-    if (!employee) return 999; // للعملاء: دائماً متوفر
+    if (!employee) return 999; 
 
     if (!selectedVariant || !selectedSize) return 0;
 
@@ -247,9 +214,6 @@ export default function ProductDetail() {
 
   const currentSizeQuantity = getSizeQuantity();
 
-  // ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅
-  // ✅ دالة إضافة المنتج إلى السلة - المهمة جداً ✅
-  // ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅
   const handleAddToCart = () => {
     if (!product) return;
 
@@ -258,25 +222,14 @@ export default function ProductDetail() {
       return;
     }
 
-    // ✅ تأكد من وجود اللون والمقاس
     const finalColor = selectedColor || product.variants?.[0]?.color || "افتراضي";
     const finalSize = selectedSize || selectedVariant?.sizes?.[0] || "ONE SIZE";
 
-    console.log("🛒 إضافة منتج إلى السلة:", {
-      productId: product.modelId,
-      name: product.description,
-      color: finalColor,
-      size: finalSize,
-      quantity: quantity,
-      itemCode: currentItemCode
-    });
-
-    // ✅ استدعاء addToCart بالمعلمات الصحيحة
     addToCart(
-      product,          // المنتج الأصلي
-      finalColor,       // اللون المختار
-      finalSize,        // المقاس المختار
-      quantity          // الكمية
+      product,          
+      finalColor,       
+      finalSize,        
+      quantity          
     );
 
     alert(`✅ تم إضافة "${product.description}" إلى السلة`);
@@ -317,8 +270,6 @@ export default function ProductDetail() {
       if (newVariant.sizes && newVariant.sizes.length > 0) {
         const firstSize = newVariant.sizes[0];
         setSelectedSize(firstSize);
-        
-        // ✅ تحديث itemCode للمقاس الجديد
         updateItemCodeForSize(newVariant, firstSize);
       } else {
         setSelectedSize("");
@@ -328,21 +279,17 @@ export default function ProductDetail() {
 
   const handleSizeSelect = (size: string) => {
     setSelectedSize(size);
-    
-    // ✅ تحديث itemCode عند تغيير المقاس
     if (selectedVariant) {
       updateItemCodeForSize(selectedVariant, size);
     }
   };
 
-  // ✅ تحديد لون حالة الكمية
   const getQuantityColor = (qty: number) => {
     if (qty === 0) return "bg-red-100 text-red-800 border-red-200";
     if (qty <= 5) return "bg-yellow-100 text-yellow-800 border-yellow-200";
     return "bg-green-100 text-green-800 border-green-200";
   };
 
-  // ✅ تحديد نص حالة الكمية
   const getQuantityText = (qty: number, size?: string) => {
     if (!employee) return "✅ متوفر";
 
@@ -364,14 +311,6 @@ export default function ProductDetail() {
             <div className="text-center">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
               <p className="mt-4 text-gray-600">جاري تحميل المنتج...</p>
-              <p className="text-sm text-gray-500 mt-1">
-                رقم المنتج: {productId}
-              </p>
-              {employee && (
-                <p className="text-xs text-blue-600 mt-2">
-                  🔍 جلب كميات المخزن للموظف...
-                </p>
-              )}
             </div>
           </div>
         </div>
@@ -390,24 +329,12 @@ export default function ProductDetail() {
               <h2 className="text-xl font-medium text-gray-900 mb-2">
                 المنتج غير موجود
               </h2>
-              <p className="text-gray-600 mb-2">رقم المنتج: {productId}</p>
-              {employee && (
-                <p className="text-sm text-blue-600 mb-4">👔 كنت تبحث كموظف</p>
-              )}
-              <div className="flex gap-3 justify-center">
-                <button
-                  onClick={() => window.history.back()}
-                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
-                >
-                  العودة للمنتجات
-                </button>
-                <button
-                  onClick={fetchProductDetails}
-                  className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300"
-                >
-                  إعادة المحاولة
-                </button>
-              </div>
+              <button
+                onClick={() => window.history.back()}
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+              >
+                العودة للمنتجات
+              </button>
             </div>
           </div>
         </div>
@@ -457,30 +384,57 @@ export default function ProductDetail() {
             >
               {employee ? "👔 وضع الموظف" : "👤 عميل"}
             </span>
-
-            {employee && (
-              <span className="text-xs text-gray-600 bg-gray-100 px-2 py-1 rounded">
-                الكمية الإجمالية: {product.cur_qty || 0} قطعة
-              </span>
-            )}
           </div>
         </div>
 
         <div className="bg-white rounded-lg shadow-lg overflow-hidden mb-12">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 p-8">
-            {/* صور المنتج */}
+            
+            {/* 📸 العمود الأيمن: صور المنتج */}
             <div>
-              <div className="aspect-[3/4] overflow-hidden rounded-lg bg-white border border-gray-200">
+              {/* الصورة الرئيسية */}
+              <div className="aspect-[3/4] overflow-hidden rounded-lg bg-white border border-gray-200 shadow-sm">
                 <img
                   src={mainImage}
                   alt={product.description}
-                  className="w-full h-full object-contain p-4"
+                  className="w-full h-full object-contain p-4 transition-transform duration-300 hover:scale-105"
                   onError={(e) => {
                     e.currentTarget.src =
                       "https://via.placeholder.com/600x800/EFEFEF/666666?text=No+Image";
                   }}
                 />
               </div>
+
+              {/* 🔥 ✅ معرض الصور المصغرة (Thumbnails) */}
+              {product.variants && product.variants.length > 1 && (
+                <div className="mt-4">
+                  <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent">
+                    {product.variants.map((variant) => (
+                      <button
+                        key={variant.id}
+                        onClick={() => handleColorSelect(variant.color)}
+                        title={variant.color}
+                        className={`relative w-20 h-24 flex-shrink-0 rounded-md overflow-hidden border-2 transition-all cursor-pointer ${
+                          selectedColor === variant.color
+                            ? "border-blue-600 ring-2 ring-blue-100 opacity-100"
+                            : "border-transparent border-gray-100 opacity-70 hover:opacity-100 hover:border-gray-300"
+                        }`}
+                      >
+                        <img
+                          src={variant.imageUrl}
+                          alt={variant.color}
+                          className="w-full h-full object-cover"
+                          loading="lazy"
+                        />
+                        {/* شريط صغير لاسم اللون */}
+                        <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[10px] text-center py-0.5 truncate backdrop-blur-sm">
+                          {variant.color}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* ✅ معلومات كود المنتج */}
               <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
@@ -499,11 +453,6 @@ export default function ProductDetail() {
                     نسخ
                   </button>
                 </div>
-                <p className="text-xs text-gray-500 mt-2">
-                  {selectedSize 
-                    ? `كود للمقاس: ${selectedSize}` 
-                    : "كود عام للمنتج"}
-                </p>
               </div>
 
               {/* ✅ ملاحظة للموظف حول الكميات */}
@@ -519,7 +468,7 @@ export default function ProductDetail() {
               )}
             </div>
 
-            {/* معلومات المنتج */}
+            {/* 📝 العمود الأيسر: معلومات المنتج */}
             <div className="space-y-6">
               <div>
                 <h1 className="text-3xl font-bold text-gray-900">
@@ -532,12 +481,6 @@ export default function ProductDetail() {
                   <span className="text-sm bg-gray-100 text-gray-600 px-2 py-1 rounded-md font-mono">
                     الكود: {masterCode}
                   </span>
-
-                  {currentItemCode && (
-                    <span className="text-sm bg-blue-100 text-blue-700 px-2 py-1 rounded-md font-mono">
-                      كود المنتج: {currentItemCode}
-                    </span>
-                  )}
                 </div>
               </div>
 
@@ -590,9 +533,6 @@ export default function ProductDetail() {
                               {totalQty} قطعة
                             </span>
                           )}
-                          <span className="text-xs text-gray-500 mt-1">
-                            {variant.itemCode ? `كود: ${variant.itemCode.substring(0, 8)}...` : ''}
-                          </span>
                         </button>
                       );
                     })}
@@ -607,7 +547,7 @@ export default function ProductDetail() {
                     المقاس{" "}
                     {employee && (
                       <span className="text-sm text-gray-500">
-                        (مع الكميات وأكواد المنتج)
+                        (مع الكميات)
                       </span>
                     )}
                   </h3>
@@ -618,10 +558,7 @@ export default function ProductDetail() {
                         selectedVariant.cur_qty || 
                         0;
                       const displayQty = employee ? sizeQty : 999;
-                      const sizeItemCode = selectedVariant.sizeItemCodes?.[size] || 
-                                          selectedVariant.itemCode || 
-                                          currentItemCode;
-
+                      
                       return (
                         <button
                           key={size}
@@ -642,9 +579,6 @@ export default function ProductDetail() {
                               {displayQty}
                             </span>
                           )}
-                          <span className="text-xs text-gray-500 mt-1 truncate max-w-full">
-                            {sizeItemCode ? `كود: ${sizeItemCode}` : ''}
-                          </span>
                         </button>
                       );
                     })}
@@ -676,16 +610,6 @@ export default function ProductDetail() {
                     +
                   </button>
                 </div>
-                {employee && currentSizeQuantity > 0 && (
-                  <p className="text-sm text-gray-600 mt-2">
-                    متوفر: {currentSizeQuantity} قطعة
-                  </p>
-                )}
-                {employee && currentSizeQuantity === 0 && (
-                  <p className="text-sm text-red-600 mt-2">
-                    ⚠️ غير متوفر حالياً في المخزن
-                  </p>
-                )}
               </div>
 
               {/* الأزرار جنباً إلى جنب */}
@@ -743,15 +667,6 @@ export default function ProductDetail() {
                   <li>• ضمان 30 يوم</li>
                   <li>• شحن مجاني للطلبات فوق 200 ج.م</li>
                   <li>• إرجاع خلال 14 يوم</li>
-                  {employee && (
-                    <>
-                      <li>• 👔 للموظفين: عرض كميات المخزن الحقيقية</li>
-                      <li>
-                        • 👔 للموظفين: كود المنتج الحالي: {currentItemCode}
-                      </li>
-                      <li>• 👔 للموظفين: يتغير الكود بتغير اللون والمقاس</li>
-                    </>
-                  )}
                 </ul>
               </div>
             </div>
