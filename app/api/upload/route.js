@@ -12,6 +12,8 @@ const r2 = new S3Client({
     accessKeyId: process.env.R2_ACCESS_KEY_ID,
     secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
   },
+  // هذه الخاصية ضرورية لـ Cloudflare R2
+  forcePathStyle: true, 
 });
 
 export async function POST(request) {
@@ -37,7 +39,8 @@ export async function POST(request) {
         const r2Key = `${uuidv4()}-${safeFileName}`;
 
         const uploadCommand = new PutObjectCommand({
-          Bucket: process.env.R2_BUCKET_NAME,
+          // 👇 هنا التعديل: كتبنا الاسم مباشرة لضمان العمل
+          Bucket: 'matgar1', 
           Key: r2Key,
           Body: buffer,
           ContentType: file.type,
