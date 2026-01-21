@@ -5,9 +5,9 @@ import { v4 as uuidv4 } from 'uuid';
 
 const prisma = new PrismaClient();
 
-// 🔥 التعديل: إزالة الإعدادات المعقدة والعودة للأساسيات
+// 🔥 التعديل هنا: تغيير المنطقة إلى "us-east-1" لحل مشكلة x-id
 const r2 = new S3Client({
-  region: "auto",
+  region: "us-east-1", // 👈 هذا هو الحل السحري (كان auto سابقاً)
   endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
   credentials: {
     accessKeyId: process.env.R2_ACCESS_KEY_ID,
@@ -31,9 +31,7 @@ export async function POST(request) {
         const buffer = Buffer.from(await file.arrayBuffer());
         
         const originalName = file.name;
-        // استخراج الكود من اسم الملف (مثلاً 1001.jpg -> 1001)
         const itemCodeFromFileName = originalName.substring(0, originalName.lastIndexOf('.'));
-        
         const safeFileName = sanitizeFileName(originalName);
         const r2Key = `${uuidv4()}-${safeFileName}`;
 
