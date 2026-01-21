@@ -3,10 +3,9 @@ import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { PrismaClient } from "@prisma/client";
 import { v4 as uuidv4 } from 'uuid';
 
-// تهيئة Prisma
 const prisma = new PrismaClient();
 
-// تهيئة Cloudflare R2
+// 🔥 التعديل هنا: إضافة إعدادات التوافق مع R2
 const r2 = new S3Client({
   region: "auto",
   endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
@@ -14,13 +13,15 @@ const r2 = new S3Client({
     accessKeyId: process.env.R2_ACCESS_KEY_ID,
     secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
   },
+  // 👇 هذه السطور هي الحل للمشكلة
+  forcePathStyle: true, 
+  requestChecksumCalculation: "WHEN_REQUIRED",
+  responseChecksumValidation: "WHEN_REQUIRED",
 });
 
 export async function POST(request) {
   try {
     const formData = await request.formData();
-    
-    // دعم استقبال ملف واحد أو عدة ملفات (للمرونة)
     const files = formData.getAll("file");
 
     if (!files || files.length === 0) {
@@ -33,19 +34,11 @@ export async function POST(request) {
       try {
         const buffer = Buffer.from(await file.arrayBuffer());
         
-        // 1. تنظيف وتجهيز اسم الملف
-        // نحتفظ بالاسم الأصلي لاستخراج الكود، وننشئ اسماً فريداً لـ R2
         const originalName = file.name;
-        
-        // استخراج الكود من اسم الملف (إزالة الامتداد فقط)
-        // مثال: "3001.1.jpg" => "3001.1"
         const itemCodeFromFileName = originalName.substring(0, originalName.lastIndexOf('.'));
-
-        // اسم الملف في R2 (نستخدم UUID لمنع التكرار + تنظيف الاسم)
         const safeFileName = sanitizeFileName(originalName);
         const r2Key = `${uuidv4()}-${safeFileName}`;
 
-        // 2. الرفع إلى Cloudflare R2
         const uploadCommand = new PutObjectCommand({
           Bucket: process.env.R2_BUCKET_NAME,
           Key: r2Key,
@@ -55,11 +48,8 @@ export async function POST(request) {
 
         await r2.send(uploadCommand);
 
-        // 3. تكوين رابط الصورة العام
         const imageUrl = `${process.env.R2_PUBLIC_URL}/${r2Key}`;
 
-        // 4. البحث عن المنتج وربطه
-        // نبحث عن المنتج الذي يطابق كود الملف (سواء في item_code أو master_code)
         const product = await prisma.products.findFirst({
           where: { 
             OR: [
@@ -73,7 +63,6 @@ export async function POST(request) {
         let message = "✅ تم رفع الصورة (لم يتم العثور على منتج مطابق)";
 
         if (product) {
-          // تحديث المنتج بالرابط الجديد
           await prisma.products.update({
             where: { unique_id: product.unique_id },
             data: { images: imageUrl },
@@ -104,7 +93,6 @@ export async function POST(request) {
       }
     }
 
-    // إذا كان الرفع لملف واحد (كما هو الحال في الـ Frontend الحالي)، نرجع الهيكل المتوقع
     if (files.length === 1) {
         return NextResponse.json({
             success: results[0].success,
@@ -115,7 +103,6 @@ export async function POST(request) {
         });
     }
 
-    // الرد الجماعي
     return NextResponse.json({
       success: true,
       message: `تمت معالجة ${files.length} ملف`,
@@ -128,9 +115,8 @@ export async function POST(request) {
   }
 }
 
-// دالة مساعدة لتنظيف أسماء الملفات (اختياري لكن مفضل)
 function sanitizeFileName(fileName) {
   return fileName
-    .replace(/\s+/g, '-') // استبدال المسافات بشرطة
-    .replace(/[^a-zA-Z0-9.\-_]/g, ''); // إزالة الرموز الغريبة (لضمان توافق URL)
+    .replace(/\s+/g, '-')
+    .replace(/[^a-zA-Z0-9.\-_]/g, '');
 }
