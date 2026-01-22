@@ -10,6 +10,7 @@ export default function CompanyManagement() {
   const [loading, setLoading] = useState(true);
   const [companyInfo, setCompanyInfo] = useState(null);
   const [isEditing, setIsEditing] = useState(false);
+  const [uploadingLogo, setUploadingLogo] = useState(false); // ✅ حالة رفع الشعار
 
   // بيانات الشركة
   const [companyData, setCompanyData] = useState({
@@ -82,22 +83,53 @@ export default function CompanyManagement() {
       if (result.success) {
         setIsEditing(false);
         fetchCompanyInfo();
-        alert("تم تحديث معلومات الشركة بنجاح");
+        alert("✅ تم تحديث معلومات الشركة بنجاح");
       } else {
-        alert("فشل في تحديث المعلومات");
+        alert("❌ فشل في تحديث المعلومات");
       }
     } catch (error) {
       console.error("Error updating company:", error);
-      alert("حدث خطأ أثناء التحديث");
+      alert("❌ حدث خطأ أثناء التحديث");
     }
   };
 
+  // ✅ دالة رفع الشعار المعدلة (Cloudflare R2)
   const handleImageUpload = async (e) => {
     const file = e.target.files[0];
-    if (file) {
-      // هنا يمكن إضافة منطق رفع الصور إلى السيرفر
-      const imageUrl = URL.createObjectURL(file);
-      setCompanyData({ ...companyData, logo: imageUrl });
+    if (!file) return;
+
+    try {
+      setUploadingLogo(true);
+      const formData = new FormData();
+      formData.append("file", file);
+
+      // استخدام API الرفع الموجود بالفعل
+      const response = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        // ✅ استخدام الرابط الدائم من R2
+        // بما أن الـ API قد يعيد هيكل مختلف (مفرد أو جمع)، نتحقق من الحالتين
+        const imageUrl = result.image?.url || result.results?.[0]?.imageUrl;
+        
+        if (imageUrl) {
+          setCompanyData({ ...companyData, logo: imageUrl });
+          alert("✅ تم رفع الشعار بنجاح");
+        } else {
+          throw new Error("لم يتم العثور على رابط الصورة في الاستجابة");
+        }
+      } else {
+        throw new Error(result.error || "فشل الرفع");
+      }
+    } catch (error) {
+      console.error("Upload error:", error);
+      alert("❌ فشل في رفع الشعار: " + error.message);
+    } finally {
+      setUploadingLogo(false);
     }
   };
 
@@ -199,12 +231,16 @@ export default function CompanyManagement() {
                   شعار الشركة
                 </h3>
                 <div className="flex items-center space-x-6 space-x-reverse">
-                  <div className="w-32 h-32 bg-gray-100 rounded-2xl border-2 border-dashed border-gray-300 flex items-center justify-center overflow-hidden">
-                    {companyData.logo ? (
+                  <div className="w-32 h-32 bg-gray-100 rounded-2xl border-2 border-dashed border-gray-300 flex items-center justify-center overflow-hidden relative">
+                    {uploadingLogo ? (
+                      <div className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-75">
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                      </div>
+                    ) : companyData.logo ? (
                       <img
                         src={companyData.logo}
                         alt="شعار الشركة"
-                        className="w-full h-full object-cover"
+                        className="w-full h-full object-contain p-2"
                       />
                     ) : (
                       <span className="text-gray-400 text-sm">
@@ -219,17 +255,22 @@ export default function CompanyManagement() {
                           type="file"
                           accept="image/*"
                           onChange={handleImageUpload}
+                          disabled={uploadingLogo}
                           className="hidden"
                           id="logo-upload"
                         />
                         <label
                           htmlFor="logo-upload"
-                          className="inline-block bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors cursor-pointer"
+                          className={`inline-block px-4 py-2 rounded-lg transition-colors cursor-pointer ${
+                            uploadingLogo
+                              ? "bg-gray-400 text-white cursor-not-allowed"
+                              : "bg-blue-600 text-white hover:bg-blue-700"
+                          }`}
                         >
-                          رفع شعار جديد
+                          {uploadingLogo ? "جاري الرفع..." : "رفع شعار جديد"}
                         </label>
                         <p className="text-sm text-gray-500 mt-2">
-                          المقاسات الموصى بها: 256x256 بكسل
+                          سيتم رفع الشعار وحفظه بشكل دائم.
                         </p>
                       </>
                     )}
@@ -427,9 +468,10 @@ export default function CompanyManagement() {
                   </button>
                   <button
                     type="submit"
-                    className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                    disabled={uploadingLogo}
+                    className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    حفظ التغييرات
+                    {uploadingLogo ? "جاري رفع الشعار..." : "حفظ التغييرات"}
                   </button>
                 </div>
               )}
