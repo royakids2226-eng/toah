@@ -46,10 +46,12 @@ export default function CategoriesManagement() {
       const url = editingCategory ? "/api/categories" : "/api/categories";
       const method = editingCategory ? "PUT" : "POST";
 
-      // ✅ إذا كان النوع "جنس"، نضع sub كقيمة فارغة
+      // ✅ تعديل المنطق: "جنس" و "خلفية" لا يحتاجان إلى sub
+      const needsSub = formData.kind === "نوع";
+      
       const submitData = {
         ...formData,
-        sub: formData.kind === "جنس" ? "" : formData.sub,
+        sub: needsSub ? formData.sub : "",
       };
 
       const response = await fetch(url, {
@@ -118,13 +120,24 @@ export default function CategoriesManagement() {
     setFormData({ name: "", image: "", kind: "جنس", sub: "" });
   };
 
-  // ✅ عند تغيير نوع التصنيف، نعيد تعيين التصنيف الفرعي
+  // ✅ عند تغيير نوع التصنيف
   const handleKindChange = (kind) => {
     setFormData({
       ...formData,
       kind,
-      sub: kind === "جنس" ? "" : formData.sub,
+      // تصفير التصنيف الفرعي إذا لم يكن النوع "نوع"
+      sub: kind === "نوع" ? formData.sub : "",
     });
+  };
+
+  // دالة مساعدة لتحديد لون الشارة بناءً على النوع
+  const getKindBadgeColor = (kind) => {
+    switch (kind) {
+      case "جنس": return "bg-blue-100 text-blue-800";
+      case "نوع": return "bg-green-100 text-green-800";
+      case "خلفية": return "bg-purple-100 text-purple-800";
+      default: return "bg-gray-100 text-gray-800";
+    }
   };
 
   return (
@@ -193,7 +206,7 @@ export default function CategoriesManagement() {
                                 <img
                                   src={category.image}
                                   alt={category.name}
-                                  className="w-10 h-10 rounded-lg object-cover ml-3"
+                                  className="w-10 h-10 rounded-lg object-cover ml-3 border border-gray-200"
                                 />
                               )}
                               <div>
@@ -208,11 +221,7 @@ export default function CategoriesManagement() {
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                             <span
-                              className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                                category.kind === "جنس"
-                                  ? "bg-blue-100 text-blue-800"
-                                  : "bg-green-100 text-green-800"
-                              }`}
+                              className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getKindBadgeColor(category.kind)}`}
                             >
                               {category.kind}
                             </span>
@@ -230,13 +239,13 @@ export default function CategoriesManagement() {
                             <div className="flex gap-2">
                               <button
                                 onClick={() => handleEdit(category)}
-                                className="text-blue-600 hover:text-blue-900"
+                                className="text-blue-600 hover:text-blue-900 bg-blue-50 px-3 py-1 rounded hover:bg-blue-100 transition-colors"
                               >
                                 تعديل
                               </button>
                               <button
                                 onClick={() => handleDelete(category.id)}
-                                className="text-red-600 hover:text-red-900"
+                                className="text-red-600 hover:text-red-900 bg-red-50 px-3 py-1 rounded hover:bg-red-100 transition-colors"
                               >
                                 حذف
                               </button>
@@ -273,7 +282,7 @@ export default function CategoriesManagement() {
                   </h3>
                   <button
                     onClick={resetForm}
-                    className="text-gray-500 hover:text-gray-700"
+                    className="text-gray-500 hover:text-gray-700 w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100"
                   >
                     ✕
                   </button>
@@ -309,9 +318,14 @@ export default function CategoriesManagement() {
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       placeholder="https://example.com/image.jpg"
                     />
+                    <p className="text-xs text-gray-500 mt-1">
+                      {formData.kind === "خلفية" 
+                        ? "رابط صورة البانر (الهيرو) الرئيسية" 
+                        : "رابط أيقونة أو صورة التصنيف"}
+                    </p>
                   </div>
 
-                  {/* ✅ حقل النوع المحدث - خيارين فقط */}
+                  {/* ✅ حقل النوع المحدث - إضافة خيار خلفية */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       النوع *
@@ -324,37 +338,36 @@ export default function CategoriesManagement() {
                     >
                       <option value="جنس">جنس (تصنيف رئيسي)</option>
                       <option value="نوع">نوع (تصنيف فرعي)</option>
+                      <option value="خلفية">خلفية (صور الهيرو)</option>
                     </select>
-                    <p className="text-xs text-gray-500 mt-1">
-                      {formData.kind === "جنس"
-                        ? "التصنيفات الرئيسية مثل: أولاد، بنات"
-                        : "التصنيفات الفرعية مثل: تيشيرت، بنطلون"}
-                    </p>
+                    
+                    {/* شرح توضيحي ديناميكي */}
+                    <div className="mt-2 text-xs text-gray-500 bg-gray-50 p-2 rounded border border-gray-100">
+                      {formData.kind === "جنس" && "التصنيفات الرئيسية مثل: أولاد، بنات"}
+                      {formData.kind === "نوع" && "التصنيفات الفرعية مثل: تيشيرت، بنطلون (تتطلب تصنيف رئيسي)"}
+                      {formData.kind === "خلفية" && "صور العرض الرئيسية (Banners) في الصفحة الرئيسية"}
+                    </div>
                   </div>
 
-                  {/* ✅ حقل التصنيف الفرعي المحدث */}
-                  <div>
+                  {/* ✅ حقل التصنيف الفرعي (يظهر فقط للنوع "نوع") */}
+                  <div className={`transition-all duration-300 ${formData.kind !== "نوع" ? "opacity-50 pointer-events-none" : "opacity-100"}`}>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      {formData.kind === "نوع"
-                        ? "التصنيف الرئيسي *"
-                        : "التصنيف الرئيسي"}
+                      {formData.kind === "نوع" ? "التصنيف الرئيسي *" : "التصنيف الرئيسي"}
                     </label>
                     <select
                       value={formData.sub}
                       onChange={(e) =>
                         setFormData({ ...formData, sub: e.target.value })
                       }
-                      disabled={formData.kind === "جنس"}
+                      disabled={formData.kind !== "نوع"}
                       required={formData.kind === "نوع"}
                       className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                        formData.kind === "جنس"
-                          ? "bg-gray-100 text-gray-500"
-                          : ""
+                        formData.kind !== "نوع" ? "bg-gray-100 text-gray-400" : ""
                       }`}
                     >
                       <option value="">
-                        {formData.kind === "جنس"
-                          ? "غير مطلوب للتصنيفات الرئيسية"
+                        {formData.kind !== "نوع"
+                          ? "غير مطلوب لهذا النوع"
                           : "اختر التصنيف الرئيسي"}
                       </option>
                       {getParentCategories().map((parent) => (
@@ -363,29 +376,19 @@ export default function CategoriesManagement() {
                         </option>
                       ))}
                     </select>
-                    {formData.kind === "جنس" && (
-                      <p className="text-xs text-gray-500 mt-1">
-                        التصنيفات الرئيسية لا تحتاج إلى تصنيف أب
-                      </p>
-                    )}
-                    {formData.kind === "نوع" && (
-                      <p className="text-xs text-gray-500 mt-1">
-                        اختر التصنيف الرئيسي الذي يندرج تحته هذا النوع
-                      </p>
-                    )}
                   </div>
 
                   <div className="flex gap-2 pt-4">
                     <button
                       type="submit"
-                      className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors"
+                      className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
                     >
                       {editingCategory ? "تحديث" : "إضافة"}
                     </button>
                     <button
                       type="button"
                       onClick={resetForm}
-                      className="flex-1 bg-gray-500 text-white py-2 px-4 rounded-lg hover:bg-gray-600 transition-colors"
+                      className="flex-1 bg-white text-gray-700 border border-gray-300 py-2 px-4 rounded-lg hover:bg-gray-50 transition-colors"
                     >
                       إلغاء
                     </button>
