@@ -6,6 +6,7 @@ import React, {
   useState,
   useEffect,
   ReactNode,
+  useCallback,
 } from "react";
 
 interface Product {
@@ -60,178 +61,90 @@ export function ProductsProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // ✅ دالة للتحقق من حالة الموظف من localStorage مباشرة
+  // ✅ دالة للتحقق من حالة الموظف
   const checkIsEmployee = () => {
+    if (typeof window === "undefined") return false;
     try {
       const employee = localStorage.getItem("employee");
       const employeeToken = localStorage.getItem("employeeToken");
       return !!(employee && employeeToken);
     } catch (error) {
-      console.error("Error checking employee status:", error);
       return false;
     }
   };
 
-  const fetchData = async () => {
+  // ✅ دالة جلب البيانات المحسنة
+  const fetchData = useCallback(async () => {
     try {
       setLoading(true);
       setError("");
 
-      // ✅ التحقق من حالة الموظف من localStorage مباشرة
       const isEmployee = checkIsEmployee();
-
-      console.log("🔄 جلب البيانات - حالة الموظف:", isEmployee);
-
-      // ✅ استخدام API مختلف للموظفين
-      const endpoint = isEmployee ? "/api/products/employee" : "/api/products";
+      
+      // ✅ استخدام الـ API الموحد السريع مع تحديد limit
+      // نطلب 100 منتج فقط للصفحة الرئيسية لضمان السرعة القصوى
+      // (يمكن زيادة الرقم في صفحات العرض الكاملة)
+      const endpoint = `/api/getAllData?employee=${isEmployee}&limit=100`;
 
       console.log("🌐 جلب البيانات من:", endpoint);
 
-      const response = await fetch(endpoint);
+      const response = await fetch(endpoint, {
+        cache: 'no-store' // لضمان البيانات الطازجة
+      });
 
       if (!response.ok) {
-        throw new Error(`فشل في جلب البيانات: ${response.status}`);
+        throw new Error(`فشل الاتصال: ${response.status}`);
       }
 
       const data = await response.json();
 
-      // ✅ تحويل البيانات من الـ API إلى الشكل المطلوب
-      const formattedProducts: Product[] = data.products.map(
-        (product: any) => ({
-          modelId: product.modelId,
-          price: product.price,
-          category: product.category,
-          description: product.description,
-          group_name: product.group_name,
-          kind_name: product.kind_name,
-          item_name: product.item_name,
-          master_code: product.master_code,
-          variants: product.variants,
-          // ✅ الآن هذه الحقول تأتي من البيانات الحقيقية
-          cur_qty: product.cur_qty || 0,
-          stor_id: product.stor_id || 0,
-          item_code: product.item_code || "",
-          unique_id: product.unique_id || "",
-        })
-      );
+      if (!data.success) {
+        throw new Error(data.error || "فشل في تحميل البيانات");
+      }
 
-      console.log(
-        "📦 المنتجات المحملة:",
-        formattedProducts.length,
-        "منتج - للموظف:",
-        isEmployee,
-        "المنتج الأول:",
-        formattedProducts[0]
-          ? {
-              name: formattedProducts[0].item_name,
-              cur_qty: formattedProducts[0].cur_qty,
-              variants: formattedProducts[0].variants.map((v) => ({
-                color: v.color,
-                cur_qty: v.cur_qty,
-              })),
-            }
-          : "لا توجد منتجات"
-      );
-
-      setProducts(formattedProducts);
+      // ✅ البيانات تأتي جاهزة من الـ API المحسن، لا داعي لإعادة تشكيلها هنا
+      // الـ API يرسلها بالتنسيق الصحيح (products & categories)
+      
+      setProducts(data.products || []);
       setCategories(data.categories || []);
-    } catch (err) {
-      console.error("Error fetching data:", err);
-      setError("حدث خطأ في تحميل البيانات من الخادم");
+      
+      console.log(`✅ تم تحميل ${data.products.length} منتج بنجاح`);
 
-      // ✅ استخدام البيانات الافتراضية كنسخة احتياطية
-      const fallbackProducts: Product[] = [
-        {
-          modelId: "fallback-1",
-          price: 199,
-          category: "إلكترونيات",
-          description: "منتج تجريبي - سماعات رأس",
-          group_name: "إلكترونيات",
-          kind_name: "سماعات",
-          master_code: "FB001",
-          cur_qty: 15,
-          stor_id: 0,
-          item_code: "FB001",
-          unique_id: "fallback-1",
-          variants: [
-            {
-              id: "var-fb-1",
-              color: "أسود",
-              imageUrl:
-                "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=500",
-              sizes: ["ONE SIZE"],
-              cur_qty: 15,
-              stor_id: 0,
-            },
-          ],
-        },
-        {
-          modelId: "fallback-2",
-          price: 299,
-          category: "ملابس",
-          description: "منتج تجريبي - تيشيرت",
-          group_name: "ملابس",
-          kind_name: "تيشيرت",
-          master_code: "FB002",
-          cur_qty: 0,
-          stor_id: 0,
-          item_code: "FB002",
-          unique_id: "fallback-2",
-          variants: [
-            {
-              id: "var-fb-2",
-              color: "أزرق",
-              imageUrl:
-                "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=500",
-              sizes: ["M", "L", "XL"],
-              cur_qty: 0,
-              stor_id: 0,
-            },
-          ],
-        },
-      ];
-
-      const fallbackCategories: Category[] = [
-        { id: 1, name: "إلكترونيات", image: "", kind: "جنس" },
-        { id: 2, name: "ملابس", image: "", kind: "جنس" },
-      ];
-
-      setProducts(fallbackProducts);
-      setCategories(fallbackCategories);
+    } catch (err: any) {
+      console.error("❌ Error fetching data:", err);
+      setError("حدث خطأ في الاتصال بالخادم. يرجى المحاولة مرة أخرى.");
+      // لا نستخدم بيانات وهمية لتجنب تضليل المستخدم
+      setProducts([]); 
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
+  // ✅ دالة إعادة الجلب اليدوية
   const refetchData = () => {
     fetchData();
   };
 
+  // ✅ الجلب الأولي
   useEffect(() => {
     fetchData();
-  }, []); // ✅ إزالة الاعتماد على isEmployee
+  }, [fetchData]);
 
-  // ✅ إعادة جلب البيانات عند تغيير حالة المستخدم
+  // ✅ الاستماع لتغييرات تسجيل الدخول
   useEffect(() => {
     const handleStorageChange = () => {
-      console.log("🔄 تغيير في localStorage، إعادة جلب البيانات...");
+      // إعادة الجلب فقط إذا تغيرت حالة الموظف
       fetchData();
     };
 
-    // الاستماع لتغييرات localStorage من نوافذ أخرى
     window.addEventListener("storage", handleStorageChange);
-
-    // الاستماع لأحداث التخزين في نفس النافذة
+    
+    // مراقبة التغييرات المحلية
     const originalSetItem = localStorage.setItem;
     localStorage.setItem = function (key, value) {
       originalSetItem.apply(this, [key, value]);
-      if (
-        key === "employee" ||
-        key === "employeeToken" ||
-        key === "customer" ||
-        key === "customerToken"
-      ) {
-        setTimeout(handleStorageChange, 100);
+      if (key === "employee" || key === "employeeToken") {
+        fetchData();
       }
     };
 
@@ -239,7 +152,7 @@ export function ProductsProvider({ children }: { children: ReactNode }) {
       window.removeEventListener("storage", handleStorageChange);
       localStorage.setItem = originalSetItem;
     };
-  }, []);
+  }, [fetchData]);
 
   const value: ProductsContextType = {
     products,
