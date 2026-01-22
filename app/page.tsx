@@ -122,30 +122,20 @@ export default function Home() {
     <div className="min-h-screen bg-gray-50">
       <Header />
 
-      {/* Hero Section */}
+      {/* ✅ Hero Section - تم إزالة النصوص والضبابية */}
       <section
-        className="relative text-white bg-cover bg-center bg-no-repeat"
+        className="relative w-full bg-cover bg-center bg-no-repeat"
         style={{
           backgroundImage: heroImage
-            ? `linear-gradient(rgba(0,0,0,0.4), rgba(0,0,0,0.4)), url(${heroImage})`
+            ? `url(${heroImage})` // ✅ الصورة فقط بدون تدرج لوني
             : "linear-gradient(to right, #3b82f6, #8b5cf6)",
           aspectRatio: "3 / 1",
         }}
       >
-        <div className="absolute inset-0 bg-black opacity-40"></div>
-        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center flex items-center justify-center h-full">
-          <div className="py-12">
-            <h1 className="text-4xl md:text-6xl lg:text-7xl font-bold mb-6">
-              متجر أحلام للأطفال
-            </h1>
-            <p className="text-lg md:text-2xl lg:text-3xl mb-8 opacity-90">
-              اكتشف أحدث صيحات موضة الأطفال بجودة عالية وأسعار مناسبة
-            </p>
-          </div>
-        </div>
+        {/* تم إزالة طبقة التعتيم والنصوص من هنا */}
       </section>
 
-      {/* ✅ قسم التصنيف مع تحسين الأداء - محدث */}
+      {/* ✅ قسم التصنيف مع تحسين الأداء */}
       {displayCategories.length > 0 && (
         <CategoriesSection categories={displayCategories} />
       )}
@@ -193,7 +183,7 @@ export default function Home() {
   );
 }
 
-// ✅ فصل مكون التصنيفات لتحسين الأداء - محدث
+// ✅ فصل مكون التصنيفات لتحسين الأداء
 const CategoriesSection = ({ categories }) => (
   <section className="py-16 bg-[#fdf6f8]">
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -210,7 +200,7 @@ const CategoriesSection = ({ categories }) => (
   </section>
 );
 
-// ✅ مكون بطاقة التصنيف المنفصل - محدث بشكل كامل
+// ✅ مكون بطاقة التصنيف المنفصل
 const CategoryCard = React.memo(({ category, index }) => (
   <Link href={`/categories/${category.id}`} className="group text-center block">
     <div
@@ -219,14 +209,14 @@ const CategoryCard = React.memo(({ category, index }) => (
         transform: `rotate(${index % 2 === 0 ? "-5deg" : "-5deg"})`,
       }}
     >
-      {/* ✅ الحاوية الرئيسية للصورة - تملا المساحة بالكامل */}
+      {/* ✅ الحاوية الرئيسية للصورة */}
       <div
         className="absolute inset-0 w-full h-full flex justify-center items-center transition-transform duration-300 group-hover:scale-110"
         style={{
           transform: `rotate(${index % 2 === 0 ? "5deg" : "5deg"})`,
         }}
       >
-        {/* ✅ الصورة - تملا الحاوية بالكامل */}
+        {/* ✅ الصورة */}
         <div className="w-full h-full relative">
           <img
             src={category.image}
@@ -237,12 +227,12 @@ const CategoryCard = React.memo(({ category, index }) => (
               e.currentTarget.src = "https://via.placeholder.com/300x400/EFEFEF/666666?text=No+Image";
             }}
           />
-          {/* ✅ طبقة تظليل للصورة لتحسين قراءة النص */}
+          {/* ✅ طبقة تظليل للصورة */}
           <div className="absolute inset-0 bg-black opacity-20 rounded-2xl group-hover:opacity-10 transition-opacity duration-300"></div>
         </div>
       </div>
 
-      {/* ✅ النص - يظهر فوق الصورة */}
+      {/* ✅ النص */}
       <div
         className="relative z-10 w-full pt-32 md:pt-48 transition-transform duration-300 group-hover:scale-105"
         style={{
