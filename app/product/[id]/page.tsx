@@ -52,6 +52,9 @@ export default function ProductDetail() {
   const [loading, setLoading] = useState(true);
   const [currentItemCode, setCurrentItemCode] = useState<string>("");
   const [employeeQuantities, setEmployeeQuantities] = useState<QuantityData>({});
+  
+  // ✅ حالة لتخزين رقم الواتساب (الهاتف 1 من الشركة)
+  const [whatsappNumber, setWhatsappNumber] = useState<string>("");
 
   // ✅ التحقق من حالة الموظف
   const isEmployee = () => {
@@ -65,6 +68,25 @@ export default function ProductDetail() {
   };
 
   const employee = isEmployee();
+
+  // ✅ جلب معلومات الشركة للحصول على رقم الهاتف
+  useEffect(() => {
+    const fetchCompanyInfo = async () => {
+      try {
+        const response = await fetch("/api/company");
+        if (response.ok) {
+          const data = await response.json();
+          // نستخدم الهاتف 1، وإذا لم يوجد نستخدم الهاتف 2، وإذا لم يوجد نستخدم رقم افتراضي
+          const phone = data.phone1 || data.phone2 || "201234567890";
+          setWhatsappNumber(phone);
+        }
+      } catch (error) {
+        console.error("Error fetching company info:", error);
+      }
+    };
+
+    fetchCompanyInfo();
+  }, []);
 
   // ✅ دالة جلب تفاصيل المنتج
   const fetchProductDetails = async () => {
@@ -235,6 +257,7 @@ export default function ProductDetail() {
     alert(`✅ تم إضافة "${product.description}" إلى السلة`);
   };
 
+  // ✅ دالة الواتساب المحدثة لاستخدام الرقم الديناميكي
   const handleWhatsApp = () => {
     if (!product) return;
 
@@ -253,7 +276,8 @@ export default function ProductDetail() {
       selectedSize || "غير محدد"
     }\n- السعر: ${product.price} ج.م\n- الحالة: ${availability}`;
 
-    const whatsappUrl = `https://wa.me/201234567890?text=${encodeURIComponent(
+    // ✅ استخدام الرقم الديناميكي
+    const whatsappUrl = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(
       message
     )}`;
     window.open(whatsappUrl, "_blank");
