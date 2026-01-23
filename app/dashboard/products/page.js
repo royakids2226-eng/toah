@@ -16,12 +16,13 @@ export default function ProductsManagement() {
   const [editingProduct, setEditingProduct] = useState(null);
   const [isDeletingAll, setIsDeletingAll] = useState(false);
   
-  // ✅ حالات جديدة للتحديد والترقيم
-  const [selectedProducts, setSelectedProducts] = useState([]); // قائمة الـ IDs المحددة
+  // ✅ حالات التحديد والترقيم
+  const [selectedProducts, setSelectedProducts] = useState([]); 
   const [isDeletingSelected, setIsDeletingSelected] = useState(false);
   const [page, setPage] = useState(1);
-  const [limit, setLimit] = useState(50); // عدد المنتجات في الصفحة
+  const [limit, setLimit] = useState(50); // عدد المنتجات في كل دفعة
   const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const [productData, setProductData] = useState({
     item_name: "",
@@ -54,7 +55,7 @@ export default function ProductsManagement() {
         }
 
         setUser(userData);
-        fetchProducts(1); // جلب الصفحة الأولى
+        fetchProducts(1, false); // جلب الصفحة الأولى
       } catch (error) {
         console.error("Error:", error);
         router.push("/login");
@@ -66,20 +67,35 @@ export default function ProductsManagement() {
     checkAdmin();
   }, [router]);
 
-  // ✅ دالة جلب المنتجات مع الترقيم
+  // ✅ دالة جلب المنتجات (النسخة المصححة)
   const fetchProducts = async (currentPage = 1, append = false) => {
     try {
-      setLoading(true);
+      if (append) {
+        setLoadingMore(true);
+      } else {
+        setLoading(true);
+      }
+
+      // إرسال limit و page بشكل صريح
       const response = await fetch(`/api/products?page=${currentPage}&limit=${limit}&employee=true`);
       const data = await response.json();
       
-      if (data.products && data.products.length > 0) {
+      const newProducts = data.products || [];
+      
+      if (newProducts.length > 0) {
         if (append) {
-          setProducts(prev => [...prev, ...data.products]);
+          // دمج المنتجات الجديدة مع القديمة (مع منع التكرار)
+          setProducts(prev => {
+            const existingIds = new Set(prev.map(p => p.modelId));
+            const uniqueNewProducts = newProducts.filter(p => !existingIds.has(p.modelId));
+            return [...prev, ...uniqueNewProducts];
+          });
         } else {
-          setProducts(data.products);
+          setProducts(newProducts);
         }
-        setHasMore(data.products.length === limit);
+        
+        // إذا كان عدد المنتجات المرجعة أقل من الحد، فهذا يعني أننا وصلنا للنهاية
+        setHasMore(newProducts.length === limit);
         setPage(currentPage);
       } else {
         if (!append) setProducts([]);
@@ -89,21 +105,9 @@ export default function ProductsManagement() {
       console.error("Error fetching products:", error);
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
   };
-
-  // ✅ دالة البحث (تعيد الترقيم للصفحة الأولى)
-  useEffect(() => {
-    const delayDebounceFn = setTimeout(() => {
-      if (searchTerm) {
-        // إذا كان هناك بحث، نستخدم API البحث (أو نفلتر محلياً إذا كانت البيانات قليلة)
-        // هنا سنفلتر محلياً للسرعة، لكن في الإنتاج يفضل البحث في السيرفر
-        // إذا كنت تريد البحث في كل الداتابيز، ستحتاج لتعديل الـ API ليقبل search param
-      }
-    }, 500);
-
-    return () => clearTimeout(delayDebounceFn);
-  }, [searchTerm]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -130,7 +134,7 @@ export default function ProductsManagement() {
         setShowAddForm(false);
         setEditingProduct(null);
         setProductData({ item_name: "", master_code: "", item_code: "", color: "", size: "", out_price: "", images: "", cur_qty: "", group_name: "", kind_name: "" });
-        fetchProducts(1); // إعادة تحميل القائمة
+        fetchProducts(1, false); // إعادة تحميل من البداية
         alert(editingProduct ? "تم تحديث المنتج بنجاح" : "تم إضافة المنتج بنجاح");
       } else {
         alert(result.error || "فشل في حفظ المنتج");
@@ -147,7 +151,8 @@ export default function ProductsManagement() {
       const response = await fetch(`/api/products/${productId}`, { method: "DELETE" });
       const result = await response.json();
       if (result.success) {
-        fetchProducts(page);
+        // حذف المنتج محلياً من المصفوفة لتجنب إعادة التحميل الكامل
+        setProducts(prev => prev.filter(p => p.modelId !== productId));
         alert("تم حذف المنتج بنجاح");
       } else {
         alert(result.error || "فشل في حذف المنتج");
@@ -181,24 +186,21 @@ export default function ProductsManagement() {
     }
   };
 
-  // ✅ دالة حذف المنتجات المحددة
   const handleDeleteSelected = async () => {
     if (selectedProducts.length === 0) return;
     if (!confirm(`هل أنت متأكد من حذف ${selectedProducts.length} منتج؟`)) return;
 
     try {
       setIsDeletingSelected(true);
-      // سنرسل طلبات حذف متتالية (أو يمكن إنشاء API خاص للحذف المتعدد)
-      // للأمان والسرعة حالياً سنستخدم Loop
-      let deletedCount = 0;
+      // حذف المنتجات المحددة بالتتابع
       for (const id of selectedProducts) {
         await fetch(`/api/products/${id}`, { method: "DELETE" });
-        deletedCount++;
       }
       
-      alert(`تم حذف ${deletedCount} منتج بنجاح`);
+      // تحديث الحالة محلياً
+      setProducts(prev => prev.filter(p => !selectedProducts.includes(p.modelId)));
       setSelectedProducts([]);
-      fetchProducts(1); // إعادة تحميل من البداية
+      alert("تم حذف المنتجات المحددة بنجاح");
     } catch (error) {
       console.error("Error deleting selected:", error);
       alert("حدث خطأ أثناء الحذف");
@@ -207,7 +209,6 @@ export default function ProductsManagement() {
     }
   };
 
-  // ✅ التحكم في الـ Checkbox
   const handleSelectAll = (e) => {
     if (e.target.checked) {
       const allIds = filteredProducts.map(p => p.modelId);
@@ -225,6 +226,7 @@ export default function ProductsManagement() {
     }
   };
 
+  // فلترة محلية للبحث السريع في المنتجات المحملة حالياً
   const filteredProducts = products.filter(
     (product) =>
       product.item_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -238,7 +240,7 @@ export default function ProductsManagement() {
         <div className="flex justify-center items-center h-64">
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-            <p className="mt-4 text-gray-600">جاري التحميل...</p>
+            <p className="mt-4 text-gray-600">جاري تحميل المنتجات...</p>
           </div>
         </div>
       </div>
@@ -306,12 +308,12 @@ export default function ProductsManagement() {
             <table className="w-full relative">
               <thead className="bg-gray-50 sticky top-0 z-10 shadow-sm">
                 <tr>
-                  <th className="px-4 py-3 text-right">
+                  <th className="px-4 py-3 text-right w-10">
                     <input 
                       type="checkbox" 
                       onChange={handleSelectAll}
                       checked={selectedProducts.length > 0 && selectedProducts.length === filteredProducts.length}
-                      className="w-4 h-4 text-blue-600 rounded"
+                      className="w-4 h-4 text-blue-600 rounded cursor-pointer"
                     />
                   </th>
                   <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">المنتج</th>
@@ -330,7 +332,7 @@ export default function ProductsManagement() {
                         type="checkbox" 
                         checked={selectedProducts.includes(product.modelId)}
                         onChange={() => handleSelectProduct(product.modelId)}
-                        className="w-4 h-4 text-blue-600 rounded"
+                        className="w-4 h-4 text-blue-600 rounded cursor-pointer"
                       />
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
@@ -379,15 +381,22 @@ export default function ProductsManagement() {
             </table>
           </div>
           
-          {/* زر تحميل المزيد */}
+          {/* ✅ زر تحميل المزيد (يظهر فقط إذا كان هناك المزيد ولا يوجد بحث نشط) */}
           {hasMore && !searchTerm && (
             <div className="p-4 text-center border-t border-gray-200">
               <button 
                 onClick={() => fetchProducts(page + 1, true)}
-                disabled={loading}
-                className="text-blue-600 hover:text-blue-800 font-medium"
+                disabled={loadingMore}
+                className="bg-gray-100 text-gray-700 px-6 py-2 rounded-full hover:bg-gray-200 transition-colors font-medium flex items-center justify-center gap-2 mx-auto disabled:opacity-50"
               >
-                {loading ? "جاري التحميل..." : "تحميل المزيد من المنتجات"}
+                {loadingMore ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-700"></div>
+                    جاري التحميل...
+                  </>
+                ) : (
+                  "⬇️ تحميل المزيد"
+                )}
               </button>
             </div>
           )}
@@ -402,6 +411,7 @@ export default function ProductsManagement() {
           )}
         </div>
 
+        {/* Modal Form remains the same */}
         {(showAddForm || editingProduct) && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-2xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
@@ -411,7 +421,7 @@ export default function ProductsManagement() {
                   <button onClick={() => { setShowAddForm(false); setEditingProduct(null); }} className="text-gray-400 hover:text-gray-600">✕</button>
                 </div>
                 <form onSubmit={handleSubmit} className="space-y-4">
-                  {/* ... نفس حقول الإدخال السابقة ... */}
+                  {/* Fields... */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div><label className="block text-sm font-medium text-gray-700 mb-1">اسم المنتج *</label><input type="text" required value={productData.item_name} onChange={(e) => setProductData({...productData, item_name: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg" /></div>
                     <div><label className="block text-sm font-medium text-gray-700 mb-1">الكود الرئيسي *</label><input type="text" required value={productData.master_code} onChange={(e) => setProductData({...productData, master_code: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg" /></div>
@@ -435,7 +445,7 @@ export default function ProductsManagement() {
         )}
 
         {showBulkUpload && (
-          <BulkProductsUpload onClose={() => setShowBulkUpload(false)} onSuccess={() => { fetchProducts(1); setShowBulkUpload(false); }} />
+          <BulkProductsUpload onClose={() => setShowBulkUpload(false)} onSuccess={() => { fetchProducts(1, false); setShowBulkUpload(false); }} />
         )}
       </div>
     </div>
