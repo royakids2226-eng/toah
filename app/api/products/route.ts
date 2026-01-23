@@ -3,6 +3,8 @@ import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
+export const dynamic = 'force-dynamic'; // لضمان عدم تخزين البيانات القديمة
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -10,7 +12,8 @@ export async function GET(request: Request) {
     const sub = searchParams.get("sub");
     const search = searchParams.get("search");
     const page = parseInt(searchParams.get("page") || "1");
-    const limit = parseInt(searchParams.get("limit") || "10000");
+    // ✅ نستخدم القيمة القادمة من الرابط أو 50 كافتراضي
+    const limit = parseInt(searchParams.get("limit") || "50"); 
     const employeeView = searchParams.get("employee") === "true";
 
     console.log("🔍 جلب المنتجات:", {
@@ -22,14 +25,11 @@ export async function GET(request: Request) {
       employeeView,
     });
 
-    // ✅ التحقق من حالة الموظف إذا كان الطلب للموظفين
     let employee = false;
     if (employeeView) {
-      // هنا يمكنك إضافة منطق للتحقق من التوكن
       employee = true;
     }
 
-    // ✅ البحث عن اسم التصنيف إذا كان ID رقمي
     let categoryName = category;
     if (category && !isNaN(parseInt(category))) {
       const cat = await prisma.categories.findUnique({
@@ -40,29 +40,13 @@ export async function GET(request: Request) {
       }
     }
 
-    console.log(`🔍 معايير البحث: 
-      التصنيف: "${categoryName}" 
-      Sub: "${sub}" 
-      البحث: "${search}"
-      حالة الموظف: ${employee}
-    `);
-
-    // ✅ بناء شروط الفلترة الديناميكية
     const whereConditions: any = {};
 
-    // للموظفين: نعرض كل شيء بما فيه الصفر
-    // للعملاء: نعرض فقط ما هو متوفر (cur_qty > 0)
     if (!employee) {
       whereConditions.cur_qty = { gt: 0 };
-    }
-
-    // ✅ الموظفين: يمكنهم رؤية جميع المخازن
-    // العملاء: فقط المخزن الرئيسي (stor_id: 0)
-    if (!employee) {
       whereConditions.stor_id = 0;
     }
 
-    // ✅ إضافة فلترة التصنيف
     if (categoryName) {
       whereConditions.OR = [
         { group_name: { contains: categoryName, mode: "insensitive" } },
@@ -72,10 +56,8 @@ export async function GET(request: Request) {
       ];
     }
 
-    // ✅ إضافة فلترة Sub Category
     if (sub) {
       if (whereConditions.OR) {
-        // دمج مع شروط التصنيف
         whereConditions.OR.push(
           { description: { contains: sub, mode: "insensitive" } },
           { kind_name: { contains: sub, mode: "insensitive" } },
@@ -90,7 +72,6 @@ export async function GET(request: Request) {
       }
     }
 
-    // ✅ إضافة فلترة البحث العام
     if (search) {
       if (whereConditions.OR) {
         whereConditions.OR.push(
@@ -111,19 +92,14 @@ export async function GET(request: Request) {
       }
     }
 
-    console.log(`📋 شروط الفلترة النهائية:`, JSON.stringify(whereConditions, null, 2));
-
-    // ✅ 1. جلب جميع المنتجات الخام مع الفلترة
+    // جلب البيانات (يتم جلب الكل ثم التصفية والتجميع لأن التجميع يغير العدد)
     const allProductsRaw = await prisma.products.findMany({
       where: whereConditions,
       orderBy: {
-        item_name: "asc",
+        unique_id: "desc", // الأحدث أولاً
       },
     });
 
-    console.log(`📊 جميع المنتجات الخام من DB: ${allProductsRaw.length} منتج`);
-
-    // ✅ 2. تجميع المنتجات حسب master_code مع المنطق الصحيح للموظفين
     const groupedByMasterCode: { [key: string]: any } = {};
 
     allProductsRaw.forEach((row) => {
@@ -146,8 +122,7 @@ export async function GET(request: Request) {
           kind_name: row.kind_name || "",
           item_name: row.item_name || "",
           item_code: row.item_code || "",
-          // ✅ الحقل الأساسي للكمية (عرضه في ProductCard)
-          cur_qty: 0, // سيتم حسابه لاحقاً
+          cur_qty: 0, 
           variants: [],
         };
       }
@@ -157,16 +132,12 @@ export async function GET(request: Request) {
       );
 
       if (!variant) {
-        // ✅ حل مشكلة الصور بشكل أفضل
         let imageUrl = "https://via.placeholder.com/500x700/EFEFEF/666666?text=No+Image";
 
         if (row.images) {
           const img = row.images.trim();
           if (img !== "" && img !== "null" && img !== "NULL") {
-            // ✅ التحقق من أن الصورة ليست base64 صغير
-            if (img.startsWith("data:image") && img.length < 100) {
-              console.warn(`⚠️ صورة base64 صغيرة جداً لـ ${row.item_code}: ${img.length} حرف`);
-            } else {
+            if (!(img.startsWith("data:image") && img.length < 100)) {
               imageUrl = img;
             }
           }
@@ -178,57 +149,46 @@ export async function GET(request: Request) {
           color: color,
           imageUrl: imageUrl,
           sizes: [],
-          // ✅ الكمية في مستوى اللون
           cur_qty: curQty,
           stor_id: storId,
-          // ✅ للتحسين: تجميع كميات المقاسات
           sizeQuantities: {},
         };
         groupedByMasterCode[masterCode].variants.push(variant);
       }
 
-      // ✅ تحديث الكمية الإجمالية للون
       variant.cur_qty += curQty;
-      
-      // ✅ تحديث الكمية الإجمالية للموديل (للـ ProductCard)
       groupedByMasterCode[masterCode].cur_qty += curQty;
 
       if (size && !variant.sizes.includes(size)) {
         variant.sizes.push(size);
       }
 
-      // ✅ تسجيل كمية المقاس
       if (size) {
         variant.sizeQuantities = variant.sizeQuantities || {};
         variant.sizeQuantities[size] = (variant.sizeQuantities[size] || 0) + curQty;
       }
     });
 
-    // ✅ 3. تحويل إلى مصفوفة وفلترة المنتجات التي لديها variants
     const allGroupedProducts = Object.values(groupedByMasterCode).filter(
       (product) => product.variants.length > 0
     );
 
-    console.log(`🎯 المنتجات بعد التجميع: ${allGroupedProducts.length} موديل`);
-
-    // ✅ حساب الترقيم على الموديلات المجمعة
+    // ✅✅ التعديل الحاسم هنا: استخدام limit بدلاً من 20 ✅✅
     const totalProducts = allGroupedProducts.length;
-    const totalPages = Math.ceil(totalProducts / 20);
-    const skip = (page - 1) * 20;
+    const totalPages = Math.ceil(totalProducts / limit); // كان 20
+    const skip = (page - 1) * limit; // كان 20
 
-    // ✅ 4. أخذ الجزء المطلوب فقط للصفحة الحالية
-    const paginatedProducts = allGroupedProducts.slice(skip, skip + 20);
+    // ✅ قطع المصفوفة بناءً على الـ limit المطلوب
+    const paginatedProducts = allGroupedProducts.slice(skip, skip + limit);
 
-    console.log(`📄 الترقيم: صفحة ${page} من ${totalPages}, عرض ${paginatedProducts.length} موديل`);
+    console.log(`📄 صفحة ${page}، المطلوب ${limit}، المرجع ${paginatedProducts.length}`);
 
-    // ✅ 5. جلب الفئات مع Sub Categories
     const categories = await prisma.categories.findMany({
       orderBy: {
         name: "asc",
       },
     });
 
-    // ✅ تجميع Sub Categories لكل تصنيف
     const categoriesWithSubs = categories.map((cat) => ({
       ...cat,
       sub_categories: categories.filter(
@@ -236,7 +196,6 @@ export async function GET(request: Request) {
       ),
     }));
 
-    // ✅ 6. إحصائيات الترقيم
     const hasNextPage = page < totalPages;
     const hasPrevPage = page > 1;
 
@@ -248,7 +207,7 @@ export async function GET(request: Request) {
         currentPage: page,
         totalPages: totalPages,
         totalProducts: totalProducts,
-        limit: 20,
+        limit: limit, // إرجاع الليميت الفعلي
         hasNextPage: hasNextPage,
         hasPrevPage: hasPrevPage,
       },
@@ -265,15 +224,6 @@ export async function GET(request: Request) {
     return NextResponse.json({
       success: false,
       products: [],
-      categories: [],
-      pagination: {
-        currentPage: 1,
-        totalPages: 1,
-        totalProducts: 0,
-        limit: 20,
-        hasNextPage: false,
-        hasPrevPage: false,
-      },
       error: "حدث خطأ في تحميل البيانات",
     });
   }
