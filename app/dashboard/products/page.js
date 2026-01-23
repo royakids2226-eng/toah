@@ -12,10 +12,12 @@ export default function ProductsManagement() {
   const [products, setProducts] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [showAddForm, setShowAddForm] = useState(false);
-  const [showBulkUpload, setShowBulkUpload] = useState(false); // ✅ إضافة هذا السطر
+  const [showBulkUpload, setShowBulkUpload] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
+  
+  // حالة لزر الحذف الجماعي (لتجنب الضغط المتكرر)
+  const [isDeletingAll, setIsDeletingAll] = useState(false);
 
-  // بيانات المنتج الجديد
   const [productData, setProductData] = useState({
     item_name: "",
     master_code: "",
@@ -77,7 +79,6 @@ export default function ProductsManagement() {
         : "/api/products";
       const method = editingProduct ? "PUT" : "POST";
 
-      // تحضير البيانات للإرسال
       const submitData = {
         ...productData,
         out_price: parseFloat(productData.out_price) || 0,
@@ -142,6 +143,42 @@ export default function ProductsManagement() {
     }
   };
 
+  // 🔥 دالة الحذف الجماعي الجديدة
+  const handleDeleteAll = async () => {
+    // 1. التأكيد الأول
+    if (!confirm("⚠️ تحذير خطير!\nهل أنت متأكد تماماً من حذف جميع المنتجات؟\nهذا الإجراء لا يمكن التراجع عنه!")) {
+      return;
+    }
+
+    // 2. التأكيد الثاني (أمان إضافي)
+    const verification = prompt("للتأكيد، اكتب كلمة 'حذف' في المربع أدناه:");
+    if (verification !== "حذف") {
+      alert("إلغاء العملية: الكلمة غير صحيحة.");
+      return;
+    }
+
+    try {
+      setIsDeletingAll(true);
+      const response = await fetch("/api/products/delete-all", {
+        method: "DELETE",
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        setProducts([]); // تصفية القائمة فوراً
+        alert(result.message);
+      } else {
+        alert(result.error || "فشل في عملية الحذف الجماعي");
+      }
+    } catch (error) {
+      console.error("Error deleting all products:", error);
+      alert("حدث خطأ أثناء الاتصال بالسيرفر");
+    } finally {
+      setIsDeletingAll(false);
+    }
+  };
+
   const filteredProducts = products.filter(
     (product) =>
       product.item_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -169,7 +206,7 @@ export default function ProductsManagement() {
       <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
         {/* رأس الصفحة */}
         <div className="mb-8">
-          <div className="flex justify-between items-center">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <div>
               <h1 className="text-3xl font-bold text-gray-900">
                 إدارة المنتجات
@@ -178,19 +215,31 @@ export default function ProductsManagement() {
                 إضافة، تعديل وحذف منتجات المتجر
               </p>
             </div>
-            <div className="flex gap-4">
+            
+            <div className="flex flex-wrap gap-3 w-full md:w-auto">
               <button
                 onClick={() => setShowAddForm(true)}
-                className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors font-medium"
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors font-medium text-sm flex-1 md:flex-none text-center"
               >
-                + إضافة منتج جديد
+                + إضافة منتج
               </button>
               <button
                 onClick={() => setShowBulkUpload(true)}
-                className="bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 transition-colors font-medium flex items-center gap-2"
+                className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors font-medium text-sm flex items-center justify-center gap-2 flex-1 md:flex-none"
               >
-                📊 إضافة منتجات متعددة
+                📊 إضافة متعددة
               </button>
+              
+              {/* 🔴 زر الحذف الجماعي الجديد */}
+              {products.length > 0 && (
+                <button
+                  onClick={handleDeleteAll}
+                  disabled={isDeletingAll}
+                  className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors font-medium text-sm flex items-center justify-center gap-2 flex-1 md:flex-none disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isDeletingAll ? "جاري الحذف..." : "🗑️ حذف الكل"}
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -208,12 +257,9 @@ export default function ProductsManagement() {
               />
             </div>
             <div className="flex gap-3">
-              <button className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
-                تصدير
-              </button>
-              <button className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
-                تصفية
-              </button>
+              <div className="text-sm text-gray-500 flex items-center">
+                العدد الكلي: <span className="font-bold mx-1">{filteredProducts.length}</span> منتج
+              </div>
             </div>
           </div>
         </div>
@@ -257,11 +303,14 @@ export default function ProductsManagement() {
                               "/placeholder.jpg"
                             }
                             alt={product.item_name}
+                            onError={(e) => {
+                              e.target.style.display = 'none'; // إخفاء الصورة المكسورة
+                            }}
                           />
                         </div>
                         <div className="mr-4">
-                          <div className="text-sm font-medium text-gray-900">
-                            {product.item_name}
+                          <div className="text-sm font-medium text-gray-900 truncate max-w-[200px]" title={product.item_name}>
+                            {product.item_name || "بدون اسم"}
                           </div>
                           <div className="text-sm text-gray-500">
                             {product.variants?.length || 0} لون
@@ -270,11 +319,8 @@ export default function ProductsManagement() {
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">
+                      <div className="text-sm text-gray-900 font-mono">
                         {product.master_code}
-                      </div>
-                      <div className="text-sm text-gray-500">
-                        {product.item_code}
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
@@ -300,16 +346,16 @@ export default function ProductsManagement() {
                           onClick={() => {
                             setEditingProduct(product);
                             setProductData({
-                              item_name: product.item_name,
-                              master_code: product.master_code,
-                              item_code: product.item_code,
+                              item_name: product.item_name || "",
+                              master_code: product.master_code || "",
+                              item_code: product.item_code || "",
                               color: product.variants?.[0]?.color || "",
                               size: product.variants?.[0]?.sizes?.[0] || "",
-                              out_price: product.price.toString(),
+                              out_price: product.price?.toString() || "0",
                               images: product.variants?.[0]?.imageUrl || "",
-                              cur_qty: product.cur_qty.toString(),
-                              group_name: product.group_name,
-                              kind_name: product.kind_name,
+                              cur_qty: product.cur_qty?.toString() || "0",
+                              group_name: product.group_name || "",
+                              kind_name: product.kind_name || "",
                             });
                             setShowAddForm(true);
                           }}
@@ -399,6 +445,7 @@ export default function ProductsManagement() {
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       />
                     </div>
+                    {/* باقي الحقول كما هي ... */}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         الكود الرئيسي *
