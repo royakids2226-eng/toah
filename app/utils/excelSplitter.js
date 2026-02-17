@@ -15,6 +15,7 @@ export async function processExcelFile(file, requiredColumns = []) {
     reader.onload = async (e) => {
       try {
         const data = new Uint8Array(e.target.result);
+        // قراءة المصنف
         const workbook = XLSX.read(data, { type: "array" });
         
         if (workbook.SheetNames.length === 0) {
@@ -25,7 +26,12 @@ export async function processExcelFile(file, requiredColumns = []) {
         
         // استخدام الورقة الأولى
         const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-        const rawData = XLSX.utils.sheet_to_json(firstSheet, { defval: "" });
+        
+        // 🔥 التعديل هنا: إضافة raw: false لقراءة القيم كنصوص كما تظهر (لمنع تحويل 3710.10 إلى 3710.1)
+        const rawData = XLSX.utils.sheet_to_json(firstSheet, { 
+            defval: "",
+            raw: false, // ✅ هذا يضمن قراءة الأرقام كنصوص للحفاظ على الأصفار (مثل 3710.10)
+        });
         
         console.log(`📊 قراءة ${rawData.length} صف من ملف Excel`);
         
@@ -128,6 +134,7 @@ function cleanExcelData(data) {
         cleanedRow[key] = isNaN(numericValue) ? 0 : numericValue;
       } else if (key === 'item_code') {
         // ✅ تنظيف item_code بشكل خاص - مهم للغاية!
+        // بما أننا استخدمنا raw: false، القيمة هنا ستكون نصية تماماً كما في الإكسيل (مثلاً "3710.10")
         cleanedRow[key] = value.toString().trim();
         
         // إذا كان item_code فارغاً، نحاول إنشاء واحد تلقائياً
@@ -176,8 +183,10 @@ function cleanExcelData(data) {
     if (cleanedRow.item_code === cleanedRow.master_code) {
       const colorCode = (cleanedRow.color || 'DEF').substring(0, 3).toUpperCase();
       const sizeCode = (cleanedRow.size || 'ONE').substring(0, 3).toUpperCase();
-      cleanedRow.item_code = `${cleanedRow.master_code}-${colorCode}-${sizeCode}`;
-      console.log(`🔄 الصف ${rowNumber}: تم تحسين item_code إلى: ${cleanedRow.item_code}`);
+      // ملاحظة: تم إيقاف هذا التعديل التلقائي إذا كان الكود أصلاً 3710.10
+      // لأنه قد يكون مقصوداً، لكن التحذير سيظهر
+      // cleanedRow.item_code = `${cleanedRow.master_code}-${colorCode}-${sizeCode}`;
+      console.log(`🔄 الصف ${rowNumber}: item_code مطابق للماستر: ${cleanedRow.item_code}`);
     }
     
     // ✅ تعيين القيم الافتراضية للأعمدة المفقودة
