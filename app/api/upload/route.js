@@ -31,21 +31,27 @@ export async function POST(request) {
         const buffer = Buffer.from(await file.arrayBuffer());
         
         const originalName = file.name;
+        // استخراج الكود من اسم الملف (إزالة الامتداد)
         const itemCodeFromFileName = originalName.substring(0, originalName.lastIndexOf('.'));
+        
+        // تنظيف اسم الملف للرفع على R2
         const safeFileName = originalName.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9.\-_]/g, '');
         const r2Key = `${uuidv4()}-${safeFileName}`;
 
+        // إعداد أمر الرفع
         const uploadCommand = new PutObjectCommand({
-          Bucket: process.env.R2_BUCKET_NAME || "matgar1", // يقرأ المتغير أو يستخدم الاسم كاحتياطي
+          Bucket: process.env.R2_BUCKET_NAME || "matgar1", 
           Key: r2Key,
           Body: buffer,
           ContentType: file.type,
         });
 
+        // تنفيذ الرفع
         await r2.send(uploadCommand);
 
         const imageUrl = `${process.env.R2_PUBLIC_URL}/${r2Key}`;
 
+        // 1. البحث عن أول منتج يطابق الاسم (لنعرف الموديل واللون)
         const product = await prisma.products.findFirst({
           where: { 
             OR: [
@@ -59,16 +65,42 @@ export async function POST(request) {
         let message = "✅ تم رفع الصورة (لم يتم العثور على منتج مطابق)";
 
         if (product) {
-          await prisma.products.update({
-            where: { unique_id: product.unique_id },
+          // 2. منطق التحديث الجماعي (لكل المقاسات)
+          // نقوم بإنشاء شرط للبحث عن كل الأخوة (نفس الموديل ونفس اللون)
+          
+          let whereCondition = {};
+
+          if (product.master_code) {
+            // إذا كان للمنتج ماستر كود، نحدث كل المنتجات التي لها نفس الماستر كود ونفس اللون
+            whereCondition = {
+                master_code: product.master_code,
+                // نضيف شرط اللون فقط إذا كان موجوداً لضمان عدم خلط ألوان الموديل الواحد
+                ...(product.color ? { color: product.color } : {})
+            };
+          } else {
+            // إذا لم يوجد ماستر كود، نعتمد على الكود المطابق فقط (حالة احتياطية)
+            whereCondition = {
+                OR: [
+                    { item_code: itemCodeFromFileName },
+                    { master_code: itemCodeFromFileName }
+                ]
+            };
+          }
+
+          // تنفيذ التحديث الجماعي
+          const updateResult = await prisma.products.updateMany({
+            where: whereCondition,
             data: { images: imageUrl },
           });
 
           productInfo = {
-            code: product.item_code,
-            name: product.item_name
+            code: product.item_code || product.master_code,
+            name: product.item_name,
+            color: product.color,
+            master: product.master_code
           };
-          message = "✅ تم رفع الصورة وربطها مع المنتج";
+          
+          message = `✅ تم رفع الصورة وتطبيقها على ${updateResult.count} منتج/مقاس (موديل: ${product.master_code || 'بدون'}، لون: ${product.color || 'الكل'})`;
         }
 
         results.push({
