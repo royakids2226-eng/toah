@@ -19,209 +19,72 @@ export async function processExcelFile(file, requiredColumns = []) {
         
         if (workbook.SheetNames.length === 0) {
           errors.push("الملف لا يحتوي على أي أوراق بيانات");
-          return resolve({ data: [], errors, warnings });
+          resolve({ data: [], errors, warnings });
+          return;
         }
         
+        // استخدام الورقة الأولى
         const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+        const rawData = XLSX.utils.sheet_to_json(firstSheet, { defval: "" });
         
-        // ✅ قراءة كل الخلايا مع الحفاظ على التنسيق
-        const allData = [];
-        const range = XLSX.utils.decode_range(firstSheet['!ref'] || 'A1:A1');
+        console.log(`📊 قراءة ${rawData.length} صف من ملف Excel`);
         
-        // قراءة العناوين من أول صف
-        const headers = [];
-        for (let C = range.s.c; C <= range.e.c; C++) {
-          const cellAddress = XLSX.utils.encode_cell({ r: range.s.r, c: C });
-          const cell = firstSheet[cellAddress];
-          headers[C] = cell ? cell.toString().trim() : '';
+        if (rawData.length === 0) {
+          errors.push("الملف لا يحتوي على بيانات");
+          resolve({ data: [], errors, warnings });
+          return;
         }
         
-        console.log("📋 العناوين الأصلية:", headers);
+        // ✅ التحقق من وجود الأعمدة المطلوبة المعدلة
+        const enhancedRequiredColumns = [...requiredColumns, "item_code"]; // ✅ إضافة item_code كمطلوب
         
-        // ✅ تعيين الأعمدة المطلوبة بشكل ديناميكي
-        const columnMapping = {
-          master_code: ['master code', 'master_code', 'الماستر', 'الكود الرئيسي', 'master'],
-          item_code: ['item code', 'item_code', 'كود الصنف', 'كود المنتج', 'كود', 'code'],
-          item_name: ['item name', 'item_name', 'اسم المنتج', 'الاسم', 'name'],
-          out_price: ['out price', 'out_price', 'سعر البيع', 'السعر', 'price'],
-          cur_qty: ['cur qty', 'cur_qty', 'الكمية', 'quantity', 'qty'],
-          color: ['color', 'اللون'],
-          size: ['size', 'المقاس'],
-          group_name: ['group name', 'group_name', 'المجموعة', 'group'],
-          kind_name: ['kind name', 'kind_name', 'النوع', 'kind'],
-          images: ['images', 'الصور', 'image', 'img']
-        };
+        if (enhancedRequiredColumns.length > 0 && rawData.length > 0) {
+          const firstRow = rawData[0];
+          const missingColumns = enhancedRequiredColumns.filter(col => !(col in firstRow));
+          
+          if (missingColumns.length > 0) {
+            errors.push(`الأعمدة المفقودة: ${missingColumns.join(", ")}`);
+            warnings.push("ملاحظة: item_code مطلوب الآن للتمييز بين الألوان والمقاسات");
+            resolve({ data: [], errors, warnings });
+            return;
+          }
+        }
         
-        // البحث عن الأعمدة المطابقة
-        const foundColumns = {};
-        headers.forEach((header, index) => {
-          if (!header) return;
-          
-          const headerLower = header.toLowerCase().trim();
-          
-          // البحث عن تطابق
-          for (const [key, variations] of Object.entries(columnMapping)) {
-            if (variations.some(v => headerLower.includes(v) || v.includes(headerLower))) {
-              foundColumns[key] = index;
-              console.log(`✅ تم العثور على ${key} -> العمود ${index + 1}: ${header}`);
-              break;
-            }
+        // تحويل وتنظيف البيانات
+        const processedData = cleanExcelData(rawData);
+        
+        // التحقق من البيانات
+        const validationErrors = validateExcelData(processedData, enhancedRequiredColumns);
+        errors.push(...validationErrors);
+        
+        // تحذيرات
+        if (processedData.length > 10000) {
+          warnings.push(`عدد المنتجات كبير جداً (${processedData.length}). قد يستغرق الرفع وقتاً طويلاً.`);
+        }
+        
+        // التحقق من التكرارات في item_code (يجب أن يكون فريداً)
+        const duplicateItemCodes = findDuplicates(processedData, 'item_code');
+        if (duplicateItemCodes.length > 0) {
+          warnings.push(`تم العثور على ${duplicateItemCodes.length} item_code مكرر: ${duplicateItemCodes.slice(0, 5).join(', ')}${duplicateItemCodes.length > 5 ? '...' : ''}`);
+        }
+        
+        // التحقق من تنوع item_code لكل master_code
+        const masterCodeStats = analyzeMasterCodeVariants(processedData);
+        masterCodeStats.forEach(stat => {
+          if (stat.variants > 1) {
+            console.log(`✅ ${stat.master_code}: ${stat.variants} نوع (ألوان/مقاسات)`);
           }
         });
-        
-        console.log("📊 الأعمدة المكتشفة:", foundColumns);
-        
-        // ✅ التحقق من الأعمدة المطلوبة
-        const missingColumns = [];
-        const requiredFields = ['master_code', 'item_code', 'item_name', 'out_price', 'cur_qty'];
-        
-        requiredFields.forEach(field => {
-          if (!(field in foundColumns)) {
-            missingColumns.push(field);
-          }
-        });
-        
-        if (missingColumns.length > 0) {
-          errors.push(`الأعمدة المطلوبة غير موجودة: ${missingColumns.join(', ')}`);
-          errors.push("الأعمدة الموجودة: " + headers.filter(h => h).join(', '));
-          return resolve({ data: [], errors, warnings });
-        }
-        
-        // ✅ قراءة البيانات مع الحفاظ على التنسيق
-        for (let R = range.s.r + 1; R <= range.e.r; R++) {
-          const row = {};
-          let hasData = false;
-          
-          for (let C = range.s.c; C <= range.e.c; C++) {
-            const cellAddress = XLSX.utils.encode_cell({ r: R, c: C });
-            const cell = firstSheet[cellAddress];
-            
-            if (cell) {
-              // ✅ استخدام النص المعروض للحفاظ على التنسيق
-              let value = '';
-              
-              if (cell.w !== undefined) {
-                value = cell.w.toString();
-              } else if (cell.v !== undefined) {
-                value = cell.v.toString();
-              } else {
-                value = '';
-              }
-              
-              value = value.trim();
-              
-              // حفظ القيمة في الكائن حسب اسم العمود الأصلي
-              row[headers[C]] = value;
-              if (value) hasData = true;
-            }
-          }
-          
-          if (hasData) {
-            allData.push(row);
-          }
-        }
-        
-        console.log(`📊 تم قراءة ${allData.length} صف`);
-        
-        // ✅ تحويل البيانات إلى التنسيق المطلوب
-        const processedData = allData.map((row, index) => {
-          const newRow = {
-            master_code: row[headers[foundColumns.master_code]] || '',
-            item_code: row[headers[foundColumns.item_code]] || '',
-            item_name: row[headers[foundColumns.item_name]] || '',
-            out_price: parseFloat(row[headers[foundColumns.out_price]]?.replace(/[^0-9.-]/g, '') || 0) || 0,
-            cur_qty: parseInt(row[headers[foundColumns.cur_qty]]?.replace(/[^0-9.-]/g, '') || 0) || 0,
-            color: foundColumns.color ? row[headers[foundColumns.color]] || 'افتراضي' : 'افتراضي',
-            size: foundColumns.size ? row[headers[foundColumns.size]] || 'ONE SIZE' : 'ONE SIZE',
-            group_name: foundColumns.group_name ? row[headers[foundColumns.group_name]] || 'عام' : 'عام',
-            kind_name: foundColumns.kind_name ? row[headers[foundColumns.kind_name]] || 'عام' : 'عام',
-            images: foundColumns.images ? row[headers[foundColumns.images]] || '' : '',
-            stor_id: 0,
-            type_id: 0,
-            av_price: 0
-          };
-          
-          // تنظيف item_code (الحفاظ على الأصفار)
-          if (newRow.item_code && typeof newRow.item_code === 'string') {
-            newRow.item_code = newRow.item_code.trim();
-            
-            // إذا كان كود عشري نحافظ عليه
-            if (newRow.item_code.includes('.')) {
-              console.log(`✅ كود عشري محفوظ: ${newRow.item_code}`);
-            }
-          }
-          
-          // تنظيف master_code
-          if (newRow.master_code && typeof newRow.master_code === 'string') {
-            newRow.master_code = newRow.master_code.trim();
-          }
-          
-          // إنشاء unique_id
-          newRow.unique_id = `${newRow.item_code}-0-0`;
-          
-          return newRow;
-        }).filter(row => {
-          // تصفية الصفوف الفارغة
-          return row.master_code && row.master_code !== '' && 
-                 row.item_code && row.item_code !== '' && 
-                 row.item_name && row.item_name !== '' &&
-                 row.out_price > 0;
-        });
-        
-        console.log(`✅ تمت معالجة ${processedData.length} منتج`);
-        
-        // ✅ التحقق من التكرارات
-        const itemCodes = new Set();
-        const duplicates = [];
-        
-        processedData.forEach(row => {
-          if (itemCodes.has(row.item_code)) {
-            duplicates.push(row.item_code);
-          } else {
-            itemCodes.add(row.item_code);
-          }
-        });
-        
-        if (duplicates.length > 0) {
-          const uniqueDuplicates = [...new Set(duplicates)];
-          warnings.push(`⚠️ يوجد ${uniqueDuplicates.length} كود مكرر: ${uniqueDuplicates.slice(0, 5).join(', ')}`);
-          
-          // عرض تفاصيل التكرارات
-          uniqueDuplicates.slice(0, 3).forEach(code => {
-            const items = processedData.filter(r => r.item_code === code);
-            if (items.length > 1) {
-              warnings.push(`   • ${code}: ${items.length} منتجات (${items.map(i => i.color || i.size).filter(Boolean).join(', ')})`);
-            }
-          });
-        } else {
-          console.log("✅ لا توجد تكرارات في item_code");
-        }
-        
-        // ✅ تحليل الأكواد العشرية
-        const decimalCodes = processedData.filter(row => 
-          row.item_code && 
-          row.item_code.includes('.') && 
-          row.item_code.split('.')[1].length >= 2
-        );
-        
-        if (decimalCodes.length > 0) {
-          warnings.push(`✅ تم الحفاظ على ${decimalCodes.length} كود عشري: ${decimalCodes.slice(0, 3).map(d => d.item_code).join(', ')}`);
-        }
         
         resolve({ 
           data: processedData, 
           errors, 
-          warnings,
-          stats: {
-            total: processedData.length,
-            duplicates: duplicates.length,
-            decimalCodes: decimalCodes.length
-          }
+          warnings 
         });
         
       } catch (error) {
-        console.error("❌ خطأ:", error);
-        errors.push(`خطأ: ${error.message}`);
+        console.error("❌ خطأ في معالجة ملف Excel:", error);
+        errors.push(`خطأ في قراءة ملف Excel: ${error.message}`);
         resolve({ data: [], errors, warnings });
       }
     };
@@ -236,205 +99,510 @@ export async function processExcelFile(file, requiredColumns = []) {
 }
 
 /**
+ * تنظيف بيانات Excel مع التركيز على item_code للتمييز بين الألوان والمقاسات
+ * @param {Array} data - البيانات الخام
+ * @returns {Array} - البيانات النظيفة
+ */
+function cleanExcelData(data) {
+  return data.map((row, index) => {
+    const rowNumber = index + 2;
+    const cleanedRow = {};
+    
+    // تحويل جميع القيم إلى strings وتنظيفها
+    Object.keys(row).forEach(key => {
+      let value = row[key];
+      
+      // تجاهل القيم null/undefined
+      if (value === null || value === undefined) {
+        cleanedRow[key] = "";
+        return;
+      }
+      
+      // تحويل إلى string وتنظيف
+      value = value.toString().trim();
+      
+      // تنظيف الأعمدة الرقمية
+      if (key === 'out_price' || key === 'av_price' || key === 'cur_qty') {
+        // إزالة أي أحرف غير رقمية
+        const numericValue = parseFloat(value.replace(/[^0-9.-]/g, ''));
+        cleanedRow[key] = isNaN(numericValue) ? 0 : numericValue;
+      } else if (key === 'item_code') {
+        // ✅ تنظيف item_code بشكل خاص - مهم للغاية!
+        cleanedRow[key] = value.toString().trim();
+        
+        // إذا كان item_code فارغاً، نحاول إنشاء واحد تلقائياً
+        if (!cleanedRow[key] || cleanedRow[key] === "") {
+          const masterCode = (row.master_code || "").toString().trim();
+          const color = (row.color || "افتراضي").toString().trim().substring(0, 3);
+          const size = (row.size || "ONE").toString().trim().substring(0, 3);
+          
+          if (masterCode) {
+            cleanedRow[key] = `${masterCode}-${color}-${size}`;
+          } else {
+            cleanedRow[key] = `ITEM-${rowNumber}-${color}-${size}`;
+          }
+          
+          console.log(`⚠️ الصف ${rowNumber}: تم إنشاء item_code تلقائياً: ${cleanedRow[key]}`);
+        }
+      } else if (key === 'master_code') {
+        // تنظيف الأكواد الرئيسية
+        cleanedRow[key] = value.toUpperCase().replace(/\s+/g, '-');
+      } else if (key === 'item_name') {
+        // تنظيف الأسماء (إزالة المسافات الزائدة)
+        cleanedRow[key] = value.replace(/\s+/g, ' ').trim();
+      } else if (key === 'color' || key === 'size') {
+        // تنظيف الألوان والمقاسات
+        cleanedRow[key] = value || "افتراضي";
+      } else {
+        cleanedRow[key] = value;
+      }
+    });
+    
+    // ✅ التأكد من وجود master_code
+    if (!cleanedRow.master_code || cleanedRow.master_code === "") {
+      cleanedRow.master_code = `MASTER-${rowNumber}`;
+      console.log(`⚠️ الصف ${rowNumber}: تم إنشاء master_code تلقائياً: ${cleanedRow.master_code}`);
+    }
+    
+    // ✅ التأكد من وجود item_code (مرة أخرى للتأكيد)
+    if (!cleanedRow.item_code || cleanedRow.item_code === "") {
+      const colorCode = (cleanedRow.color || 'DEF').substring(0, 3).toUpperCase();
+      const sizeCode = (cleanedRow.size || 'ONE').substring(0, 3).toUpperCase();
+      cleanedRow.item_code = `${cleanedRow.master_code}-${colorCode}-${sizeCode}`;
+      console.log(`⚠️ الصف ${rowNumber}: تم إنشاء item_code نهائياً: ${cleanedRow.item_code}`);
+    }
+    
+    // ✅ إذا كان item_code يساوي master_code، نضيف تمييزاً
+    if (cleanedRow.item_code === cleanedRow.master_code) {
+      const colorCode = (cleanedRow.color || 'DEF').substring(0, 3).toUpperCase();
+      const sizeCode = (cleanedRow.size || 'ONE').substring(0, 3).toUpperCase();
+      cleanedRow.item_code = `${cleanedRow.master_code}-${colorCode}-${sizeCode}`;
+      console.log(`🔄 الصف ${rowNumber}: تم تحسين item_code إلى: ${cleanedRow.item_code}`);
+    }
+    
+    // ✅ تعيين القيم الافتراضية للأعمدة المفقودة
+    const defaults = {
+      color: "افتراضي",
+      size: "ONE SIZE",
+      group_name: "عام",
+      kind_name: "عام",
+      images: "",
+      stor_id: 0,
+      type_id: 0,
+      av_price: cleanedRow.out_price || 0,
+    };
+    
+    Object.keys(defaults).forEach(key => {
+      if (!(key in cleanedRow) || cleanedRow[key] === "") {
+        cleanedRow[key] = defaults[key];
+      }
+    });
+    
+    // ✅ إنشاء unique_id باستخدام item_code (هذا هو المفتاح!)
+    cleanedRow.unique_id = `${cleanedRow.item_code}-${cleanedRow.type_id || 0}-${cleanedRow.stor_id || 0}`;
+    
+    // ✅ إضافة حقل variant_id للتمييز بين الأصناف
+    const colorPart = (cleanedRow.color || 'default').substring(0, 3).toUpperCase();
+    const sizePart = (cleanedRow.size || 'onesize').substring(0, 3).toUpperCase();
+    cleanedRow.variant_id = `${colorPart}-${sizePart}`;
+    
+    // التحقق من صحة الأرقام
+    if (cleanedRow.out_price <= 0) {
+      console.warn(`⚠️ الصف ${rowNumber}: out_price غير صالح (${cleanedRow.out_price})`);
+    }
+    
+    if (cleanedRow.cur_qty < 0) {
+      console.warn(`⚠️ الصف ${rowNumber}: cur_qty سالب (${cleanedRow.cur_qty})`);
+    }
+    
+    return cleanedRow;
+  }).filter(row => {
+    // تصفية الصفوف الفارغة - مع اشتراط وجود item_code
+    return row.master_code && row.master_code.trim() !== "" &&
+           row.item_name && row.item_name.trim() !== "" &&
+           row.item_code && row.item_code.trim() !== ""; // ✅ شرط جديد
+  });
+}
+
+/**
+ * التحقق من صحة البيانات مع التركيز على item_code
+ * @param {Array} data - البيانات المطلوبة التحقق
+ * @param {Array} requiredColumns - الأعمدة المطلوبة
+ * @returns {Array} - قائمة الأخطاء
+ */
+export function validateExcelData(data, requiredColumns = []) {
+  const errors = [];
+  
+  if (!data || !Array.isArray(data)) {
+    return ["بيانات غير صالحة"];
+  }
+  
+  if (data.length === 0) {
+    return ["لا توجد بيانات للتحقق"];
+  }
+  
+  // التحقق من كل صف
+  data.forEach((row, index) => {
+    const rowNumber = index + 2;
+    
+    // التحقق من الأعمدة المطلوبة
+    requiredColumns.forEach(column => {
+      if (!row[column] && row[column] !== 0) {
+        errors.push(`الصف ${rowNumber}: ${column} مطلوب`);
+      }
+    });
+    
+    // ✅ التحقق من master_code
+    if (!row.master_code || row.master_code.trim() === "") {
+      errors.push(`الصف ${rowNumber}: master_code مطلوب`);
+    } else if (row.master_code.length > 50) {
+      errors.push(`الصف ${rowNumber}: master_code طويل جداً (الحد الأقصى 50 حرفاً)`);
+    }
+    
+    // ✅ التحقق من item_code - مهم جداً!
+    if (!row.item_code || row.item_code.trim() === "") {
+      errors.push(`الصف ${rowNumber}: item_code مطلوب للتمييز بين الألوان والمقاسات`);
+    } else if (row.item_code.length > 100) {
+      errors.push(`الصف ${rowNumber}: item_code طويل جداً (الحد الأقصى 100 حرفاً)`);
+    }
+    
+    // ✅ التحقق من أن item_code لا يساوي master_code (تحذير فقط)
+    if (row.item_code === row.master_code) {
+      console.warn(`⚠️ الصف ${rowNumber}: item_code يساوي master_code - قد يسبب مشاكل في التمييز بين الأصناف`);
+    }
+    
+    // التحقق من item_name
+    if (!row.item_name || row.item_name.trim() === "") {
+      errors.push(`الصف ${rowNumber}: item_name مطلوب`);
+    } else if (row.item_name.length > 200) {
+      errors.push(`الصف ${rowNumber}: item_name طويل جداً (الحد الأقصى 200 حرفاً)`);
+    }
+    
+    // التحقق من out_price
+    if (row.out_price === undefined || row.out_price === null) {
+      errors.push(`الصف ${rowNumber}: out_price مطلوب`);
+    } else {
+      const price = parseFloat(row.out_price);
+      if (isNaN(price)) {
+        errors.push(`الصف ${rowNumber}: out_price يجب أن يكون رقماً`);
+      } else if (price < 0) {
+        errors.push(`الصف ${rowNumber}: out_price يجب أن يكون عدداً موجباً`);
+      } else if (price > 1000000) {
+        errors.push(`الصف ${rowNumber}: out_price كبير جداً (الحد الأقصى 1,000,000)`);
+      }
+    }
+    
+    // التحقق من cur_qty
+    if (row.cur_qty === undefined || row.cur_qty === null) {
+      errors.push(`الصف ${rowNumber}: cur_qty مطلوب`);
+    } else {
+      const qty = parseInt(row.cur_qty);
+      if (isNaN(qty)) {
+        errors.push(`الصف ${rowNumber}: cur_qty يجب أن يكون رقماً`);
+      } else if (qty < 0) {
+        errors.push(`الصف ${rowNumber}: cur_qty يجب أن يكون عدداً موجباً`);
+      } else if (qty > 1000000) {
+        errors.push(`الصف ${rowNumber}: cur_qty كبير جداً (الحد الأقصى 1,000,000)`);
+      }
+    }
+    
+    // التحقق من color
+    if (row.color && row.color.length > 50) {
+      errors.push(`الصف ${rowNumber}: color طويل جداً (الحد الأقصى 50 حرفاً)`);
+    }
+    
+    // التحقق من size
+    if (row.size && row.size.length > 20) {
+      errors.push(`الصف ${rowNumber}: size طويل جداً (الحد الأقصى 20 حرفاً)`);
+    }
+    
+    // التحقق من group_name
+    if (row.group_name && row.group_name.length > 100) {
+      errors.push(`الصف ${rowNumber}: group_name طويل جداً (الحد الأقصى 100 حرفاً)`);
+    }
+    
+    // التحقق من kind_name
+    if (row.kind_name && row.kind_name.length > 100) {
+      errors.push(`الصف ${rowNumber}: kind_name طويل جداً (الحد الأقصى 100 حرفاً)`);
+    }
+  });
+  
+  return errors;
+}
+
+/**
  * تقسيم البيانات إلى دفعات
+ * @param {Array} data - البيانات الكاملة
+ * @param {Number} batchSize - حجم الدفعة
+ * @returns {Array} - مصفوفة من الدفعات
  */
 export function splitIntoBatches(data, batchSize = 200) {
-  if (!data || !Array.isArray(data)) return [];
+  if (!data || !Array.isArray(data)) {
+    return [];
+  }
+  
+  if (batchSize <= 0) {
+    batchSize = 200; // القيمة الافتراضية
+  }
   
   const batches = [];
   for (let i = 0; i < data.length; i += batchSize) {
-    batches.push(data.slice(i, i + batchSize));
+    const batch = data.slice(i, i + batchSize);
+    batches.push(batch);
   }
   
+  console.log(`📦 تم تقسيم ${data.length} منتج إلى ${batches.length} دفعة (${batchSize} منتج لكل دفعة)`);
   return batches;
 }
 
 /**
- * إنشاء تقرير تحليل
+ * البحث عن التكرارات في عمود معين
+ * @param {Array} data - البيانات
+ * @param {String} column - اسم العمود
+ * @returns {Array} - القيم المكررة
  */
-export function generateDataReport(data) {
-  if (!data || data.length === 0) {
-    return "لا توجد بيانات";
-  }
+function findDuplicates(data, column) {
+  const seen = new Set();
+  const duplicates = new Set();
   
-  const masterCodes = new Set(data.map(d => d.master_code));
-  const itemCodes = new Set(data.map(d => d.item_code));
-  const colors = new Set(data.map(d => d.color).filter(Boolean));
-  const sizes = new Set(data.map(d => d.size).filter(Boolean));
-  
-  // حساب التكرارات
-  const codeCount = {};
   data.forEach(row => {
-    codeCount[row.item_code] = (codeCount[row.item_code] || 0) + 1;
+    const value = row[column];
+    if (seen.has(value)) {
+      duplicates.add(value);
+    } else {
+      seen.add(value);
+    }
   });
   
-  const duplicates = Object.entries(codeCount)
-    .filter(([_, count]) => count > 1)
-    .map(([code]) => code);
-  
-  let report = "📊 تقرير تحليل البيانات:\n";
-  report += "═".repeat(40) + "\n\n";
-  report += `📦 إجمالي المنتجات: ${data.length}\n`;
-  report += `🏷️ master codes: ${masterCodes.size}\n`;
-  report += `🔤 item codes: ${itemCodes.size}\n`;
-  report += `🎨 الألوان: ${colors.size}\n`;
-  report += `📏 المقاسات: ${sizes.size}\n\n`;
-  
-  if (duplicates.length > 0) {
-    report += `⚠️ تكرارات: ${duplicates.length} كود\n`;
-    duplicates.slice(0, 5).forEach(code => {
-      const count = codeCount[code];
-      report += `   • ${code}: ${count} منتجات\n`;
-    });
-  } else {
-    report += "✅ لا توجد تكرارات\n";
-  }
-  
-  // الأكواد العشرية
-  const decimalCodes = data.filter(row => 
-    row.item_code && row.item_code.includes('.') && row.item_code.split('.')[1].length >= 2
-  );
-  
-  if (decimalCodes.length > 0) {
-    report += `\n✅ أكواد عشرية محفوظة: ${decimalCodes.length}\n`;
-    report += `   مثل: ${decimalCodes.slice(0, 3).map(d => d.item_code).join(', ')}\n`;
-  }
-  
-  return report;
+  return Array.from(duplicates);
 }
 
 /**
- * تحميل نموذج Excel
+ * تحليل تنوع الأصناف لكل master_code
+ * @param {Array} data - البيانات
+ * @returns {Array} - إحصائيات
+ */
+function analyzeMasterCodeVariants(data) {
+  const stats = {};
+  
+  data.forEach(row => {
+    const masterCode = row.master_code;
+    const itemCode = row.item_code;
+    
+    if (!stats[masterCode]) {
+      stats[masterCode] = {
+        master_code: masterCode,
+        variants: new Set(),
+        count: 0
+      };
+    }
+    
+    stats[masterCode].variants.add(itemCode);
+    stats[masterCode].count++;
+  });
+  
+  return Object.values(stats).map(stat => ({
+    master_code: stat.master_code,
+    variants: stat.variants.size,
+    total_items: stat.count,
+    item_codes: Array.from(stat.variants).slice(0, 5) // أول 5 فقط
+  }));
+}
+
+/**
+ * إنشاء تقرير تحليل البيانات
+ * @param {Array} data - البيانات
+ * @returns {Object} - التقرير
+ */
+export function createDataAnalysisReport(data) {
+  if (!data || data.length === 0) {
+    return {
+      total: 0,
+      message: "لا توجد بيانات لتحليل"
+    };
+  }
+  
+  const masterCodeStats = analyzeMasterCodeVariants(data);
+  const duplicateItemCodes = findDuplicates(data, 'item_code');
+  const duplicateMasterCodes = findDuplicates(data, 'master_code');
+  
+  // تحليل الألوان والمقاسات
+  const colors = new Set();
+  const sizes = new Set();
+  
+  data.forEach(row => {
+    if (row.color) colors.add(row.color);
+    if (row.size) sizes.add(row.size);
+  });
+  
+  return {
+    total: data.length,
+    masterCodes: {
+      unique: masterCodeStats.length,
+      withVariants: masterCodeStats.filter(s => s.variants > 1).length,
+      stats: masterCodeStats.slice(0, 10) // أول 10 فقط
+    },
+    variants: {
+      totalItemCodes: new Set(data.map(d => d.item_code)).size,
+      duplicateItemCodes: duplicateItemCodes.length,
+      duplicateMasterCodes: duplicateMasterCodes.length
+    },
+    attributes: {
+      uniqueColors: colors.size,
+      uniqueSizes: sizes.size,
+      colors: Array.from(colors).slice(0, 10),
+      sizes: Array.from(sizes).slice(0, 10)
+    },
+    issues: duplicateItemCodes.length > 0 ? [
+      `يوجد ${duplicateItemCodes.length} item_code مكرر`,
+      `يجب أن يكون item_code فريداً لكل لون/مقاس`
+    ] : ["لا توجد مشاكل في تكرار item_code"]
+  };
+}
+
+/**
+ * تحميل نموذج Excel محسّن
+ * @returns {Blob} - ملف Excel
  */
 export function getExcelTemplate() {
   const templateData = [
     {
-      "master code": "3700",
-      "item code": "3700.10",
-      "item name": "تيشيرت قطني",
-      "out price": 100,
-      "cur qty": 50,
-      "اللون": "أحمر",
-      "المقاس": "M",
-      "المجموعة": "ملابس",
-      "النوع": "تيشيرت"
+      master_code: "3700",
+      item_code: "3700.1",
+      item_name: "تيشيرت قطني",
+      color: "أحمر",
+      size: "M",
+      out_price: 100,
+      cur_qty: 50,
+      group_name: "ملابس",
+      kind_name: "تيشيرت",
+      images: "https://example.com/image1.jpg",
     },
     {
-      "master code": "3700",
-      "item code": "3700.20",
-      "item name": "تيشيرت قطني",
-      "out price": 100,
-      "cur qty": 30,
-      "اللون": "أزرق",
-      "المقاس": "L",
-      "المجموعة": "ملابس",
-      "النوع": "تيشيرت"
+      master_code: "3700",
+      item_code: "3700.2",
+      item_name: "تيشيرت قطني",
+      color: "أزرق",
+      size: "L",
+      out_price: 100,
+      cur_qty: 30,
+      group_name: "ملابس",
+      kind_name: "تيشيرت",
+      images: "",
     },
     {
-      "master code": "3700",
-      "item code": "3700.30",
-      "item name": "تيشيرت قطني",
-      "out price": 100,
-      "cur qty": 20,
-      "اللون": "أخضر",
-      "المقاس": "XL",
-      "المجموعة": "ملابس",
-      "النوع": "تيشيرت"
-    }
+      master_code: "3700",
+      item_code: "3700.3",
+      item_name: "تيشيرت قطني",
+      color: "أخضر",
+      size: "XL",
+      out_price: 100,
+      cur_qty: 20,
+      group_name: "ملابس",
+      kind_name: "تيشيرت",
+      images: "https://example.com/image3.jpg",
+    },
+    {
+      master_code: "3800",
+      item_code: "3800-RED-M",
+      item_name: "بنطلون جينز",
+      color: "أحمر",
+      size: "M",
+      out_price: 150,
+      cur_qty: 25,
+      group_name: "ملابس",
+      kind_name: "بنطلون",
+      images: "",
+    },
+    {
+      master_code: "3800",
+      item_code: "3800-BLUE-L",
+      item_name: "بنطلون جينز",
+      color: "أزرق",
+      size: "L",
+      out_price: 150,
+      cur_qty: 15,
+      group_name: "ملابس",
+      kind_name: "بنطلون",
+      images: "",
+    },
   ];
   
   const worksheet = XLSX.utils.json_to_sheet(templateData);
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, "المنتجات");
   
-  // ورقة التعليمات
-  const instructions = [
-    ["📌 تعليمات هامة:"],
+  // إضافة تعليمات محسنة
+  const instructionSheet = XLSX.utils.aoa_to_sheet([
+    ["تعليمات استخدام النموذج - إصدار محسّن"],
     [""],
-    ["1️⃣ الأعمدة المطلوبة (يمكن تسميتها بأي شكل):"],
-    ["   • master code أو master_code أو الكود الرئيسي"],
-    ["   • item code أو item_code أو كود الصنف"],
-    ["   • item name أو item_name أو اسم المنتج"],
-    ["   • out price أو out_price أو سعر البيع"],
-    ["   • cur qty أو cur_qty أو الكمية"],
+    ["📌 **الأعمدة المطلوبة الجديدة:**"],
+    ["1. master_code: الكود الرئيسي للمنتج (مثل: 3700)"],
+    ["2. item_code: الكود المحدد للون والمقاس (مثل: 3700.1, 3700.2) - **مطلوب الآن**"],
+    ["3. item_name: اسم المنتج"],
+    ["4. out_price: سعر البيع"],
+    ["5. cur_qty: الكمية المتاحة"],
     [""],
-    ["2️⃣ الأعمدة الاختيارية:"],
-    ["   • color أو اللون"],
-    ["   • size أو المقاس"],
-    ["   • group name أو المجموعة"],
-    ["   • kind name أو النوع"],
+    ["🎨 **كيفية عمل item_code:**"],
+    ["- لكل لون/مقاس يحتاج item_code فريد"],
+    ["- مثال: master_code=3700, item_code=3700.1 للون أحمر مقاس M"],
+    ["- مثال: master_code=3700, item_code=3700.2 للون أزرق مقاس L"],
+    ["- يمكن استخدام: 3700-RED-M, 3700-BLUE-L, 3700.1, 3700.2, إلخ"],
     [""],
-    ["3️⃣ مهم جداً للأكواد العشرية:"],
-    ["   • استخدم 3700.10 (وليس 3700.1)"],
-    ["   • استخدم 3700.20 (وليس 3700.2)"],
-    ["   • هذا يمنع التكرار"],
+    ["⚠️ **مهم جداً:**"],
+    ["1. item_code يجب أن يكون فريداً لكل صنف (لون/مقاس)"],
+    ["2. master_code يشير للمنتج الرئيسي"],
+    ["3. item_code يشير للصنف المحدد"],
+    ["4. بدون item_code فريد، سيتم رفع صنف واحد فقط!"],
     [""],
-    ["4️⃣ مثال صحيح:"],
-    ["   master code, item code, item name, out price, cur qty, color, size"],
-    ["   3700, 3700.10, تيشيرت أحمر, 100, 50, أحمر, M"],
-    ["   3700, 3700.20, تيشيرت أزرق, 100, 30, أزرق, L"],
-  ];
+    ["✅ **نصائح:**"],
+    ["1. استخدم أرقام متسلسلة: 3700.1, 3700.2, 3700.3"],
+    ["2. أو استخدم أسماء: 3700-RED, 3700-BLUE"],
+    ["3. أو ادمج اللون والمقاس: 3700-RED-M, 3700-BLUE-L"],
+    ["4. الحل التلقائي: إذا تركت item_code فارغاً، سينشئ النظام تلقائياً"],
+    [""],
+    ["📊 **مثال عملي:**"],
+    ["master_code, item_code, item_name, color, size, out_price, cur_qty"],
+    ["3700, 3700.1, تيشيرت, أحمر, M, 100, 50"],
+    ["3700, 3700.2, تيشيرت, أزرق, L, 100, 30"],
+    ["3700, 3700.3, تيشيرت, أخضر, XL, 100, 20"],
+    ["3800, 3800-RED-M, بنطلون, أحمر, M, 150, 25"],
+    ["3800, 3800-BLUE-L, بنطلون, أزرق, L, 150, 15"],
+  ]);
   
-  const instSheet = XLSX.utils.aoa_to_sheet(instructions);
-  XLSX.utils.book_append_sheet(workbook, instSheet, "تعليمات");
+  XLSX.utils.book_append_sheet(workbook, instructionSheet, "التعليمات");
   
   return XLSX.write(workbook, { type: "array", bookType: "xlsx" });
 }
 
 /**
- * دالة مساعدة لفحص التكرارات
+ * إنشاء تقرير تحليل للملف الحالي
+ * @param {Array} data - البيانات
+ * @returns {String} - تقرير نصي
  */
-export function checkDuplicates(data) {
-  const codeMap = {};
+export function generateDataReport(data) {
+  const report = createDataAnalysisReport(data);
   
-  data.forEach((row, index) => {
-    const code = row.item_code;
-    if (!codeMap[code]) {
-      codeMap[code] = [];
-    }
-    codeMap[code].push({
-      row: index + 2,
-      color: row.color,
-      size: row.size,
-      name: row.item_name
-    });
+  let reportText = "📊 تقرير تحليل البيانات:\n\n";
+  reportText += `إجمالي المنتجات: ${report.total}\n`;
+  reportText += `عدد master codes فريدة: ${report.masterCodes.unique}\n`;
+  reportText += `منتجات بها ألوان/مقاسات متعددة: ${report.masterCodes.withVariants}\n`;
+  reportText += `عدد item codes فريدة: ${report.variants.totalItemCodes}\n\n`;
+  
+  if (report.variants.duplicateItemCodes > 0) {
+    reportText += `⚠️ تحذير: يوجد ${report.variants.duplicateItemCodes} item_code مكرر\n`;
+    reportText += "يجب أن يكون item_code فريداً لكل صنف (لون/مقاس)\n\n";
+  }
+  
+  reportText += "🎨 الألوان المتوفرة:\n";
+  report.attributes.colors.forEach(color => {
+    reportText += `  - ${color}\n`;
   });
   
-  const duplicates = Object.entries(codeMap)
-    .filter(([_, items]) => items.length > 1)
-    .map(([code, items]) => ({
-      code,
-      count: items.length,
-      items
-    }));
-  
-  return duplicates;
-}
-
-/**
- * إصلاح التكرارات تلقائياً
- */
-export function autoFixDuplicates(data) {
-  const fixed = [];
-  const usedCodes = new Set();
-  
-  data.forEach(row => {
-    let newCode = row.item_code;
-    let counter = 1;
-    
-    while (usedCodes.has(newCode)) {
-      // إضافة لاحقة للكود المكرر
-      newCode = `${row.item_code}-${counter}`;
-      counter++;
-    }
-    
-    usedCodes.add(newCode);
-    fixed.push({
-      ...row,
-      item_code: newCode,
-      original_code: row.item_code !== newCode ? row.item_code : undefined
-    });
+  reportText += "\n📏 المقاسات المتوفرة:\n";
+  report.attributes.sizes.forEach(size => {
+    reportText += `  - ${size}\n`;
   });
   
-  return fixed;
+  return reportText;
 }
