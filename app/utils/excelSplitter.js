@@ -26,11 +26,11 @@ export async function processExcelFile(file, requiredColumns = []) {
         // استخدام الورقة الأولى
         const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
         
-        // ✅ التعديل هنا: إضافة raw: false لقراءة القيم كنصوص كما تظهر في الإكسيل
-        // هذا يمنع تحويل 3700.10 إلى 3700.1
+        // ✅ التعديل الجوهري: raw: false تجبر المكتبة على قراءة القيمة الظاهرة (النص) 
+        // بدلاً من القيمة الرقمية الكامنة، مما يحل مشكلة 3700.10 التي تتحول لـ 3700.1
         const rawData = XLSX.utils.sheet_to_json(firstSheet, { 
           defval: "", 
-          raw: false // قراءة البيانات كنصوص formatted strings
+          raw: false 
         });
         
         console.log(`📊 قراءة ${rawData.length} صف من ملف Excel`);
@@ -42,7 +42,7 @@ export async function processExcelFile(file, requiredColumns = []) {
         }
         
         // ✅ التحقق من وجود الأعمدة المطلوبة المعدلة
-        const enhancedRequiredColumns = [...requiredColumns, "item_code"]; // ✅ إضافة item_code كمطلوب
+        const enhancedRequiredColumns = [...requiredColumns, "item_code"]; 
         
         if (enhancedRequiredColumns.length > 0 && rawData.length > 0) {
           const firstRow = rawData[0];
@@ -56,29 +56,39 @@ export async function processExcelFile(file, requiredColumns = []) {
           }
         }
         
-        // تحويل وتنظيف البيانات
-        const processedData = cleanExcelData(rawData);
+        // 1. تنظيف البيانات أولاً
+        let processedData = cleanExcelData(rawData);
         
-        // التحقق من البيانات
+        // 2. 🔥 معالجة التكرارات الناتجة عن تنسيق الأرقام تلقائياً
+        // إذا قرأ الإكسيل 3700.10 و 3700.1 كلاهما 3700.1، سنقوم بدمج المقاس/اللون لجعلها فريدة
+        const { uniqueData, fixReport } = resolveDuplicateItemCodes(processedData);
+        processedData = uniqueData;
+
+        if (fixReport.length > 0) {
+            warnings.push(`⚠️ تم تعديل ${fixReport.length} كود مكرر تلقائياً لضمان فرادة البيانات (مثال: تم دمج المقاس مع الكود).`);
+            console.log("📝 تقرير تصحيح التكرارات:", fixReport);
+        }
+        
+        // 3. التحقق من البيانات بعد التصحيح
         const validationErrors = validateExcelData(processedData, enhancedRequiredColumns);
         errors.push(...validationErrors);
         
-        // تحذيرات
+        // تحذيرات الحجم
         if (processedData.length > 10000) {
           warnings.push(`عدد المنتجات كبير جداً (${processedData.length}). قد يستغرق الرفع وقتاً طويلاً.`);
         }
         
-        // التحقق من التكرارات في item_code (يجب أن يكون فريداً)
+        // التحقق النهائي من التكرارات (للاحتياط)
         const duplicateItemCodes = findDuplicates(processedData, 'item_code');
         if (duplicateItemCodes.length > 0) {
-          warnings.push(`تم العثور على ${duplicateItemCodes.length} item_code مكرر: ${duplicateItemCodes.slice(0, 5).join(', ')}${duplicateItemCodes.length > 5 ? '...' : ''}`);
+          warnings.push(`ما زال هناك ${duplicateItemCodes.length} item_code مكرر لم يتم حله تلقائياً: ${duplicateItemCodes.slice(0, 5).join(', ')}`);
         }
         
-        // التحقق من تنوع item_code لكل master_code
+        // إحصائيات للمطور
         const masterCodeStats = analyzeMasterCodeVariants(processedData);
         masterCodeStats.forEach(stat => {
           if (stat.variants > 1) {
-            console.log(`✅ ${stat.master_code}: ${stat.variants} نوع (ألوان/مقاسات)`);
+            // console.log(`✅ ${stat.master_code}: ${stat.variants} نوع (ألوان/مقاسات)`);
           }
         });
         
@@ -105,7 +115,66 @@ export async function processExcelFile(file, requiredColumns = []) {
 }
 
 /**
- * تنظيف بيانات Excel مع التركيز على item_code للتمييز بين الألوان والمقاسات
+ * دالة لحل مشكلة التكرار تلقائياً
+ * تقوم بالبحث عن الأكواد المكررة وتغييرها بإضافة -اللون أو -المقاس
+ */
+function resolveDuplicateItemCodes(data) {
+    const seen = new Map();
+    const fixes = [];
+    
+    const resolvedData = data.map((row, index) => {
+        let code = row.item_code.toString().trim();
+        const originalCode = code;
+        
+        // إذا كان الكود موجوداً مسبقاً في القائمة
+        if (seen.has(code)) {
+            const count = seen.get(code) + 1;
+            seen.set(code, count);
+            
+            // محاولة إنشاء كود جديد فريد
+            let suffix = "";
+            
+            // استخدام المقاس إذا وجد
+            if (row.size && row.size !== "ONE SIZE" && row.size !== "افتراضي" && row.size !== "ONE") {
+                suffix += `-${row.size}`;
+            }
+            // استخدام اللون إذا وجد
+            if (row.color && row.color !== "افتراضي") {
+                suffix += `-${row.color}`;
+            }
+            
+            // إذا لم نجد لا لون ولا مقاس مميز، نستخدم رقماً تسلسلياً
+            if (suffix === "") {
+                suffix = `-${count}`;
+            }
+            
+            // تنظيف الـ suffix من الرموز
+            suffix = suffix.replace(/[^a-zA-Z0-9-]/g, '');
+            
+            // تعيين الكود الجديد
+            row.item_code = `${code}${suffix}`;
+            
+            // تحديث المعرف الفريد أيضاً
+            row.unique_id = `${row.item_code}-${row.type_id || 0}-${row.stor_id || 0}`;
+            
+            fixes.push({
+                original: originalCode,
+                new: row.item_code,
+                row: index + 2
+            });
+            
+        } else {
+            seen.set(code, 1);
+        }
+        
+        return row;
+    });
+    
+    return { uniqueData: resolvedData, fixReport: fixes };
+}
+
+/**
+ * تنظيف بيانات Excel
  * @param {Array} data - البيانات الخام
  * @returns {Array} - البيانات النظيفة
  */
@@ -125,17 +194,15 @@ function cleanExcelData(data) {
       }
       
       // تحويل إلى string وتنظيف
-      // بما أننا استخدمنا raw: false، القيمة غالباً ستكون نصاً بالفعل، لكننا نؤكد التحويل
       value = value.toString().trim();
       
       // تنظيف الأعمدة الرقمية
       if (key === 'out_price' || key === 'av_price' || key === 'cur_qty') {
-        // إزالة أي أحرف غير رقمية (مثل العملات أو الفواصل الناتجة عن raw: false)
+        // إزالة أي أحرف غير رقمية
         const numericValue = parseFloat(value.replace(/[^0-9.-]/g, ''));
         cleanedRow[key] = isNaN(numericValue) ? 0 : numericValue;
       } else if (key === 'item_code') {
-        // ✅ تنظيف item_code بشكل خاص - الحفاظ على الصفر الموجود في النهاية
-        cleanedRow[key] = value; // لا نقوم بأي عملية تحويل رقمي هنا
+        cleanedRow[key] = value;
         
         // إذا كان item_code فارغاً، نحاول إنشاء واحد تلقائياً
         if (!cleanedRow[key] || cleanedRow[key] === "") {
@@ -148,8 +215,6 @@ function cleanExcelData(data) {
           } else {
             cleanedRow[key] = `ITEM-${rowNumber}-${color}-${size}`;
           }
-          
-          console.log(`⚠️ الصف ${rowNumber}: تم إنشاء item_code تلقائياً: ${cleanedRow[key]}`);
         }
       } else if (key === 'master_code') {
         // تنظيف الأكواد الرئيسية
@@ -168,7 +233,6 @@ function cleanExcelData(data) {
     // ✅ التأكد من وجود master_code
     if (!cleanedRow.master_code || cleanedRow.master_code === "") {
       cleanedRow.master_code = `MASTER-${rowNumber}`;
-      console.log(`⚠️ الصف ${rowNumber}: تم إنشاء master_code تلقائياً: ${cleanedRow.master_code}`);
     }
     
     // ✅ التأكد من وجود item_code (مرة أخرى للتأكيد)
@@ -176,15 +240,6 @@ function cleanExcelData(data) {
       const colorCode = (cleanedRow.color || 'DEF').substring(0, 3).toUpperCase();
       const sizeCode = (cleanedRow.size || 'ONE').substring(0, 3).toUpperCase();
       cleanedRow.item_code = `${cleanedRow.master_code}-${colorCode}-${sizeCode}`;
-      console.log(`⚠️ الصف ${rowNumber}: تم إنشاء item_code نهائياً: ${cleanedRow.item_code}`);
-    }
-    
-    // ✅ إذا كان item_code يساوي master_code، نضيف تمييزاً
-    if (cleanedRow.item_code === cleanedRow.master_code) {
-      const colorCode = (cleanedRow.color || 'DEF').substring(0, 3).toUpperCase();
-      const sizeCode = (cleanedRow.size || 'ONE').substring(0, 3).toUpperCase();
-      cleanedRow.item_code = `${cleanedRow.master_code}-${colorCode}-${sizeCode}`;
-      console.log(`🔄 الصف ${rowNumber}: تم تحسين item_code إلى: ${cleanedRow.item_code}`);
     }
     
     // ✅ تعيين القيم الافتراضية للأعمدة المفقودة
@@ -213,26 +268,17 @@ function cleanExcelData(data) {
     const sizePart = (cleanedRow.size || 'onesize').substring(0, 3).toUpperCase();
     cleanedRow.variant_id = `${colorPart}-${sizePart}`;
     
-    // التحقق من صحة الأرقام
-    if (cleanedRow.out_price <= 0) {
-      console.warn(`⚠️ الصف ${rowNumber}: out_price غير صالح (${cleanedRow.out_price})`);
-    }
-    
-    if (cleanedRow.cur_qty < 0) {
-      console.warn(`⚠️ الصف ${rowNumber}: cur_qty سالب (${cleanedRow.cur_qty})`);
-    }
-    
     return cleanedRow;
   }).filter(row => {
     // تصفية الصفوف الفارغة - مع اشتراط وجود item_code
     return row.master_code && row.master_code.trim() !== "" &&
            row.item_name && row.item_name.trim() !== "" &&
-           row.item_code && row.item_code.trim() !== ""; // ✅ شرط جديد
+           row.item_code && row.item_code.trim() !== "";
   });
 }
 
 /**
- * التحقق من صحة البيانات مع التركيز على item_code
+ * التحقق من صحة البيانات
  * @param {Array} data - البيانات المطلوبة التحقق
  * @param {Array} requiredColumns - الأعمدة المطلوبة
  * @returns {Array} - قائمة الأخطاء
@@ -266,16 +312,11 @@ export function validateExcelData(data, requiredColumns = []) {
       errors.push(`الصف ${rowNumber}: master_code طويل جداً (الحد الأقصى 50 حرفاً)`);
     }
     
-    // ✅ التحقق من item_code - مهم جداً!
+    // ✅ التحقق من item_code
     if (!row.item_code || row.item_code.trim() === "") {
       errors.push(`الصف ${rowNumber}: item_code مطلوب للتمييز بين الألوان والمقاسات`);
     } else if (row.item_code.length > 100) {
       errors.push(`الصف ${rowNumber}: item_code طويل جداً (الحد الأقصى 100 حرفاً)`);
-    }
-    
-    // ✅ التحقق من أن item_code لا يساوي master_code (تحذير فقط)
-    if (row.item_code === row.master_code) {
-      console.warn(`⚠️ الصف ${rowNumber}: item_code يساوي master_code - قد يسبب مشاكل في التمييز بين الأصناف`);
     }
     
     // التحقق من item_name
@@ -545,14 +586,16 @@ export function getExcelTemplate() {
     [""],
     ["📌 **الأعمدة المطلوبة الجديدة:**"],
     ["1. master_code: الكود الرئيسي للمنتج (مثل: 3700)"],
-    ["2. item_code: الكود المحدد للون والمقاس (مثل: 3700.1, 3700.10) - **مطلوب الآن**"],
+    ["2. item_code: الكود المحدد للون والمقاس (مثل: 3700.1, 3700.2) - **مطلوب الآن**"],
     ["3. item_name: اسم المنتج"],
     ["4. out_price: سعر البيع"],
     ["5. cur_qty: الكمية المتاحة"],
     [""],
     ["🎨 **كيفية عمل item_code:**"],
-    ["- هام جداً: النظام يدعم الآن الأصفار في نهاية الكود (مثل 3700.10 يختلف عن 3700.1)"],
-    ["- تأكد من تنسيق خلايا الأكواد في الإكسيل كـ 'Text' لضمان الدقة"],
+    ["- لكل لون/مقاس يحتاج item_code فريد"],
+    ["- مثال: master_code=3700, item_code=3700.1 للون أحمر مقاس M"],
+    ["- مثال: master_code=3700, item_code=3700.2 للون أزرق مقاس L"],
+    ["- يمكن استخدام: 3700-RED-M, 3700-BLUE-L, 3700.1, 3700.2, إلخ"],
     [""],
     ["⚠️ **مهم جداً:**"],
     ["1. item_code يجب أن يكون فريداً لكل صنف (لون/مقاس)"],
@@ -561,7 +604,7 @@ export function getExcelTemplate() {
     ["4. بدون item_code فريد، سيتم رفع صنف واحد فقط!"],
     [""],
     ["✅ **نصائح:**"],
-    ["1. استخدم أرقام متسلسلة: 3700.1, 3700.2, 3700.10"],
+    ["1. استخدم أرقام متسلسلة: 3700.1, 3700.2, 3700.3"],
     ["2. أو استخدم أسماء: 3700-RED, 3700-BLUE"],
     ["3. أو ادمج اللون والمقاس: 3700-RED-M, 3700-BLUE-L"],
     ["4. الحل التلقائي: إذا تركت item_code فارغاً، سينشئ النظام تلقائياً"],
@@ -569,8 +612,8 @@ export function getExcelTemplate() {
     ["📊 **مثال عملي:**"],
     ["master_code, item_code, item_name, color, size, out_price, cur_qty"],
     ["3700, 3700.1, تيشيرت, أحمر, M, 100, 50"],
-    ["3700, 3700.10, تيشيرت, أزرق, L, 100, 30"],
-    ["3700, 3700.20, تيشيرت, أخضر, XL, 100, 20"],
+    ["3700, 3700.2, تيشيرت, أزرق, L, 100, 30"],
+    ["3700, 3700.3, تيشيرت, أخضر, XL, 100, 20"],
     ["3800, 3800-RED-M, بنطلون, أحمر, M, 150, 25"],
     ["3800, 3800-BLUE-L, بنطلون, أزرق, L, 150, 15"],
   ]);
