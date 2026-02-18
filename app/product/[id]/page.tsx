@@ -13,6 +13,9 @@ interface Product {
   description: string;
   master_code?: string;
   item_code?: string;
+  // خصائص الصور المحتملة
+  image?: string;
+  imageUrl?: string;
   variants: Array<{
     id: string;
     color: string;
@@ -51,9 +54,6 @@ export default function ProductDetail() {
   const [similarProducts, setSimilarProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentItemCode, setCurrentItemCode] = useState<string>("");
-  const [employeeQuantities, setEmployeeQuantities] = useState<QuantityData>({});
-  
-  // ✅ حالة لتخزين رقم الواتساب (الهاتف 1 من الشركة)
   const [whatsappNumber, setWhatsappNumber] = useState<string>("");
 
   // ✅ التحقق من حالة الموظف
@@ -122,6 +122,24 @@ export default function ProductDetail() {
       }
 
       if (foundProduct) {
+        // 🔥🔥🔥 التعديل الجذري للترتيب هنا 🔥🔥🔥
+        // 1. التأكد من وجود المتغيرات
+        if (foundProduct.variants && foundProduct.variants.length > 0) {
+            // 2. إنشاء نسخة جديدة للمصفوفة لضمان تحديث الرياكت
+            const sortedVariants = [...foundProduct.variants].sort((a, b) => {
+                // 3. تحويل المعرفات لأرقام لضمان الترتيب الحسابي (1، 2، 3)
+                // الترتيب التصاعدي يعني أن رقم 1 سيكون في الاندكس 0
+                // في العرض العربي (RTL)، العنصر الأول يظهر في اليمين
+                return Number(a.id) - Number(b.id);
+            });
+            
+            // 4. إعادة تعيين المتغيرات المرتبة للمنتج
+            foundProduct.variants = sortedVariants;
+        } else {
+            // ضمان وجود مصفوفة فارغة لتجنب الأخطاء
+            foundProduct.variants = [];
+        }
+        
         setProduct(foundProduct);
 
         // ✅ البحث عن المنتجات المشابهة
@@ -135,7 +153,7 @@ export default function ProductDetail() {
 
         setSimilarProducts(similar);
 
-        // ✅ تعيين القيم الافتراضية
+        // ✅ تعيين القيم الافتراضية (الآن ستأخذ أول لون بعد الترتيب)
         if (foundProduct.variants && foundProduct.variants.length > 0) {
           const firstVariant = foundProduct.variants[0];
           setSelectedColor(firstVariant.color);
@@ -145,8 +163,11 @@ export default function ProductDetail() {
           if (firstVariant.sizes && firstVariant.sizes.length > 0) {
             const firstSize = firstVariant.sizes[0];
             setSelectedSize(firstSize);
-            updateItemCodeForSize(firstVariant, firstSize, foundProduct); // تمرير المنتج كمعامل
+            updateItemCodeForSize(firstVariant, firstSize, foundProduct);
           }
+        } else {
+            // حالة المنتج بدون ألوان
+            setCurrentItemCode(foundProduct.item_code || "");
         }
       }
     } catch (error: any) {
@@ -165,6 +186,12 @@ export default function ProductDetail() {
           );
           
           if (foundProduct) {
+            // ترتيب المتغيرات في حالة الفولباك أيضاً
+            if (foundProduct.variants && foundProduct.variants.length > 0) {
+                foundProduct.variants = [...foundProduct.variants].sort((a, b) => Number(a.id) - Number(b.id));
+            } else {
+                foundProduct.variants = [];
+            }
             setProduct(foundProduct);
           }
         }
@@ -182,15 +209,12 @@ export default function ProductDetail() {
     
     let newItemCode = "";
     
-    // ✅ أولوية: itemCode الخاص بالمقاس
     if (variant.sizeItemCodes && variant.sizeItemCodes[size]) {
       newItemCode = variant.sizeItemCodes[size];
     }
-    // ✅ ثانياً: itemCode العام للون
     else if (variant.itemCode) {
       newItemCode = variant.itemCode;
     }
-    // ✅ أخيراً: itemCode العام للمنتج
     else if (prod?.item_code) {
       newItemCode = prod.item_code;
     }
@@ -208,7 +232,6 @@ export default function ProductDetail() {
     (v) => v.color === selectedColor
   );
 
-  // ✅ الحصول على الكمية الإجمالية للون
   const getTotalColorQuantity = (color: string) => {
     if (!employee) return 999; 
 
@@ -218,9 +241,13 @@ export default function ProductDetail() {
     return variant.cur_qty || variant.totalColorQuantity || 0;
   };
 
-  // ✅ الحصول على الكمية للمقاس المحدد
   const getSizeQuantity = () => {
     if (!employee) return 999; 
+
+    // إذا لم يكن هناك متغيرات، استخدم كمية المنتج العامة
+    if (!product?.variants || product.variants.length === 0) {
+        return product?.cur_qty || 0;
+    }
 
     if (!selectedVariant || !selectedSize) return 0;
 
@@ -257,7 +284,6 @@ export default function ProductDetail() {
     alert(`✅ تم إضافة "${product.description}" إلى السلة`);
   };
 
-  // ✅ دالة الواتساب المحدثة لاستخدام الرقم الديناميكي
   const handleWhatsApp = () => {
     if (!product) return;
 
@@ -276,7 +302,6 @@ export default function ProductDetail() {
       selectedSize || "غير محدد"
     }\n- السعر: ${product.price} ج.م\n- الحالة: ${availability}`;
 
-    // ✅ استخدام الرقم الديناميكي
     const whatsappUrl = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(
       message
     )}`;
@@ -288,7 +313,6 @@ export default function ProductDetail() {
     const newVariant = product?.variants?.find((v) => v.color === color);
     
     if (newVariant) {
-      // ✅ تحديث itemCode للون الجديد
       setCurrentItemCode(newVariant.itemCode || product?.item_code || "");
       
       if (newVariant.sizes && newVariant.sizes.length > 0) {
@@ -366,9 +390,25 @@ export default function ProductDetail() {
     );
   }
 
-  const mainImage =
-    selectedVariant?.imageUrl || product.variants?.[0]?.imageUrl || "https://via.placeholder.com/600x800/EFEFEF/666666?text=No+Image";
+  // دالة شاملة لجلب الصورة
+  const getDisplayImage = () => {
+    // 1. صورة اللون المختار
+    if (selectedVariant?.imageUrl) return selectedVariant.imageUrl;
+    
+    // 2. إذا لم يوجد لون مختار أو صورته فارغة، نأخذ صورة أول متغير (بعد الترتيب)
+    if (product.variants && product.variants.length > 0 && product.variants[0].imageUrl) {
+        return product.variants[0].imageUrl;
+    }
 
+    // 3. صورة المنتج الجذرية
+    if (product.image) return product.image;
+    if (product.imageUrl) return product.imageUrl;
+
+    // 4. صورة افتراضية
+    return "https://via.placeholder.com/600x800/EFEFEF/666666?text=No+Image";
+  };
+
+  const mainImage = getDisplayImage();
   const masterCode = product.master_code || product.modelId;
 
   return (
@@ -396,7 +436,6 @@ export default function ProductDetail() {
           العودة للمنتجات
         </button>
 
-        {/* ✅ بادئة معلومات المستخدم */}
         <div className="mb-4 flex justify-end">
           <div className="flex items-center gap-3">
             <span
@@ -429,7 +468,7 @@ export default function ProductDetail() {
                 />
               </div>
 
-              {/* 🔥 ✅ معرض الصور المصغرة (Thumbnails) */}
+              {/* معرض الصور المصغرة - مرتبة */}
               {product.variants && product.variants.length > 1 && (
                 <div className="mt-4">
                   <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent">
@@ -450,7 +489,6 @@ export default function ProductDetail() {
                           className="w-full h-full object-cover"
                           loading="lazy"
                         />
-                        {/* شريط صغير لاسم اللون */}
                         <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[10px] text-center py-0.5 truncate backdrop-blur-sm">
                           {variant.color}
                         </div>
@@ -460,7 +498,7 @@ export default function ProductDetail() {
                 </div>
               )}
 
-              {/* ✅ معلومات كود المنتج */}
+              {/* معلومات كود المنتج */}
               <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
                 <h4 className="font-medium text-gray-700 mb-2">كود المنتج:</h4>
                 <div className="flex items-center justify-between">
@@ -479,7 +517,6 @@ export default function ProductDetail() {
                 </div>
               </div>
 
-              {/* ✅ ملاحظة للموظف حول الكميات */}
               {employee && (
                 <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
                   <p className="text-sm text-blue-700">
@@ -500,7 +537,6 @@ export default function ProductDetail() {
                 </h1>
                 <p className="text-gray-600 mt-2">{product.category}</p>
 
-                {/* ✅ عرض الأكواد */}
                 <div className="mt-3 flex flex-wrap gap-2">
                   <span className="text-sm bg-gray-100 text-gray-600 px-2 py-1 rounded-md font-mono">
                     الكود: {masterCode}
@@ -513,7 +549,6 @@ export default function ProductDetail() {
                   {product.price?.toLocaleString()} ج.م
                 </span>
 
-                {/* ✅ شارة الكمية */}
                 <span
                   className={`px-3 py-1 rounded-full text-sm font-medium ${getQuantityColor(
                     currentSizeQuantity
@@ -523,7 +558,7 @@ export default function ProductDetail() {
                 </span>
               </div>
 
-              {/* اختيار اللون */}
+              {/* اختيار اللون - مرتب */}
               {product.variants && product.variants.length > 0 && (
                 <div>
                   <h3 className="text-lg font-medium text-gray-900 mb-3">
@@ -636,7 +671,7 @@ export default function ProductDetail() {
                 </div>
               </div>
 
-              {/* الأزرار جنباً إلى جنب */}
+              {/* الأزرار */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <button
                   onClick={handleAddToCart}
@@ -697,7 +732,7 @@ export default function ProductDetail() {
           </div>
         </div>
 
-        {/* ✅ قسم المنتجات المشابهة */}
+        {/* منتجات مشابهة */}
         {similarProducts.length > 0 && (
           <div className="bg-white rounded-lg shadow-lg overflow-hidden p-8">
             <div className="mb-6">

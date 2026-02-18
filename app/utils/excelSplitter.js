@@ -25,7 +25,13 @@ export async function processExcelFile(file, requiredColumns = []) {
         
         // استخدام الورقة الأولى
         const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-        const rawData = XLSX.utils.sheet_to_json(firstSheet, { defval: "" });
+        
+        // ✅ التعديل هنا: إضافة raw: false لقراءة القيم كنصوص كما تظهر في الإكسيل
+        // هذا يمنع تحويل 3700.10 إلى 3700.1
+        const rawData = XLSX.utils.sheet_to_json(firstSheet, { 
+          defval: "", 
+          raw: false // قراءة البيانات كنصوص formatted strings
+        });
         
         console.log(`📊 قراءة ${rawData.length} صف من ملف Excel`);
         
@@ -119,16 +125,17 @@ function cleanExcelData(data) {
       }
       
       // تحويل إلى string وتنظيف
+      // بما أننا استخدمنا raw: false، القيمة غالباً ستكون نصاً بالفعل، لكننا نؤكد التحويل
       value = value.toString().trim();
       
       // تنظيف الأعمدة الرقمية
       if (key === 'out_price' || key === 'av_price' || key === 'cur_qty') {
-        // إزالة أي أحرف غير رقمية
+        // إزالة أي أحرف غير رقمية (مثل العملات أو الفواصل الناتجة عن raw: false)
         const numericValue = parseFloat(value.replace(/[^0-9.-]/g, ''));
         cleanedRow[key] = isNaN(numericValue) ? 0 : numericValue;
       } else if (key === 'item_code') {
-        // ✅ تنظيف item_code بشكل خاص - مهم للغاية!
-        cleanedRow[key] = value.toString().trim();
+        // ✅ تنظيف item_code بشكل خاص - الحفاظ على الصفر الموجود في النهاية
+        cleanedRow[key] = value; // لا نقوم بأي عملية تحويل رقمي هنا
         
         // إذا كان item_code فارغاً، نحاول إنشاء واحد تلقائياً
         if (!cleanedRow[key] || cleanedRow[key] === "") {
@@ -198,7 +205,7 @@ function cleanExcelData(data) {
       }
     });
     
-    // ✅ إنشاء unique_id باستخدام item_code (هذا هو المفتاح!)
+    // ✅ إنشاء unique_id باستخدام item_code
     cleanedRow.unique_id = `${cleanedRow.item_code}-${cleanedRow.type_id || 0}-${cleanedRow.stor_id || 0}`;
     
     // ✅ إضافة حقل variant_id للتمييز بين الأصناف
@@ -480,7 +487,7 @@ export function getExcelTemplate() {
     },
     {
       master_code: "3700",
-      item_code: "3700.2",
+      item_code: "3700.10",
       item_name: "تيشيرت قطني",
       color: "أزرق",
       size: "L",
@@ -492,7 +499,7 @@ export function getExcelTemplate() {
     },
     {
       master_code: "3700",
-      item_code: "3700.3",
+      item_code: "3700.20",
       item_name: "تيشيرت قطني",
       color: "أخضر",
       size: "XL",
@@ -538,16 +545,14 @@ export function getExcelTemplate() {
     [""],
     ["📌 **الأعمدة المطلوبة الجديدة:**"],
     ["1. master_code: الكود الرئيسي للمنتج (مثل: 3700)"],
-    ["2. item_code: الكود المحدد للون والمقاس (مثل: 3700.1, 3700.2) - **مطلوب الآن**"],
+    ["2. item_code: الكود المحدد للون والمقاس (مثل: 3700.1, 3700.10) - **مطلوب الآن**"],
     ["3. item_name: اسم المنتج"],
     ["4. out_price: سعر البيع"],
     ["5. cur_qty: الكمية المتاحة"],
     [""],
     ["🎨 **كيفية عمل item_code:**"],
-    ["- لكل لون/مقاس يحتاج item_code فريد"],
-    ["- مثال: master_code=3700, item_code=3700.1 للون أحمر مقاس M"],
-    ["- مثال: master_code=3700, item_code=3700.2 للون أزرق مقاس L"],
-    ["- يمكن استخدام: 3700-RED-M, 3700-BLUE-L, 3700.1, 3700.2, إلخ"],
+    ["- هام جداً: النظام يدعم الآن الأصفار في نهاية الكود (مثل 3700.10 يختلف عن 3700.1)"],
+    ["- تأكد من تنسيق خلايا الأكواد في الإكسيل كـ 'Text' لضمان الدقة"],
     [""],
     ["⚠️ **مهم جداً:**"],
     ["1. item_code يجب أن يكون فريداً لكل صنف (لون/مقاس)"],
@@ -556,7 +561,7 @@ export function getExcelTemplate() {
     ["4. بدون item_code فريد، سيتم رفع صنف واحد فقط!"],
     [""],
     ["✅ **نصائح:**"],
-    ["1. استخدم أرقام متسلسلة: 3700.1, 3700.2, 3700.3"],
+    ["1. استخدم أرقام متسلسلة: 3700.1, 3700.2, 3700.10"],
     ["2. أو استخدم أسماء: 3700-RED, 3700-BLUE"],
     ["3. أو ادمج اللون والمقاس: 3700-RED-M, 3700-BLUE-L"],
     ["4. الحل التلقائي: إذا تركت item_code فارغاً، سينشئ النظام تلقائياً"],
@@ -564,8 +569,8 @@ export function getExcelTemplate() {
     ["📊 **مثال عملي:**"],
     ["master_code, item_code, item_name, color, size, out_price, cur_qty"],
     ["3700, 3700.1, تيشيرت, أحمر, M, 100, 50"],
-    ["3700, 3700.2, تيشيرت, أزرق, L, 100, 30"],
-    ["3700, 3700.3, تيشيرت, أخضر, XL, 100, 20"],
+    ["3700, 3700.10, تيشيرت, أزرق, L, 100, 30"],
+    ["3700, 3700.20, تيشيرت, أخضر, XL, 100, 20"],
     ["3800, 3800-RED-M, بنطلون, أحمر, M, 150, 25"],
     ["3800, 3800-BLUE-L, بنطلون, أزرق, L, 150, 15"],
   ]);
