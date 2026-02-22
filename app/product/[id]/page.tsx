@@ -8,7 +8,7 @@ import { useCart } from "../../../context/CartContext";
 
 interface Product {
   modelId: string;
-  id?: string | number; // تمت إضافة هذا الحقل لضمان التوافق مع المعرف الرقمي
+  id?: string | number;
   price: number;
   category: string;
   description: string;
@@ -75,7 +75,23 @@ export default function ProductDetail() {
     fetchCompanyInfo();
   }, []);
 
-  // ✅ دالة لترتيب وتنظيف المتغيرات (استبعاد الألوان الدخيلة)
+  // دالة مساعدة للتحقق من تطابق المنتج مع الرابط
+  const isProductMatch = (p: any, searchId: string) => {
+    if (!p) return false;
+    const searchStr = String(searchId).toLowerCase();
+
+    // مقارنة مع جميع الحقول المحتملة
+    const idMatch = p.id && String(p.id) === searchId;
+    const modelMatch =
+      p.modelId && String(p.modelId).toLowerCase() === searchStr;
+    const masterMatch =
+      p.master_code && String(p.master_code).toLowerCase() === searchStr;
+    const itemMatch =
+      p.item_code && String(p.item_code).toLowerCase() === searchStr;
+
+    return idMatch || modelMatch || masterMatch || itemMatch;
+  };
+
   const processVariants = (
     variants: any[],
     masterCode?: string,
@@ -83,17 +99,11 @@ export default function ProductDetail() {
   ) => {
     if (!variants || variants.length === 0) return [];
 
-    // 1. ترتيب حسب الـ ID
     let processed = [...variants].sort((a, b) => Number(a.id) - Number(b.id));
 
-    // 2. فلترة صارمة: إذا كان لدينا MasterCode، نستبعد المتغيرات التي لا تحتويه (اختياري حسب دقة بياناتك)
-    // هذه الخطوة تمنع ظهور ألوان منتج "501" داخل منتج "50"
     if (masterCode && masterCode.length > 2) {
       processed = processed.filter((v) => {
-        // إذا لم يكن للمتغير كود، نقبله مؤقتاً
         if (!v.itemCode) return true;
-        // إذا كان للمتغير كود، يجب أن يحتوي على كود المنتج الأصلي أو يكون مطابقاً
-        // نستخدم toLowerCase لتجنب مشاكل الحروف الكبيرة والصغيرة
         const vCode = v.itemCode.toLowerCase();
         const mCode = masterCode.toLowerCase();
         const mid = modelId ? modelId.toLowerCase() : "";
@@ -112,7 +122,7 @@ export default function ProductDetail() {
       let foundProduct: Product | undefined;
       let allProductsList: Product[] = [];
 
-      // الخطوة 1: محاولة الجلب من القائمة العامة (الأسرع)
+      // الخطوة 1: محاولة الجلب من القائمة العامة
       try {
         const endpoint = employee
           ? "/api/getAllData?employee=true"
@@ -123,13 +133,8 @@ export default function ProductDetail() {
           const data = await response.json();
           if (data.success && data.products) {
             allProductsList = data.products;
-            // بحث دقيق جداً (Exact Match) مع إضافة البحث بـ id
-            foundProduct = allProductsList.find(
-              (p: any) =>
-                String(p.id) === String(productId) ||
-                String(p.modelId) === String(productId) ||
-                String(p.master_code) === String(productId) ||
-                String(p.item_code) === String(productId)
+            foundProduct = allProductsList.find((p: any) =>
+              isProductMatch(p, productId)
             );
           }
         }
@@ -148,27 +153,21 @@ export default function ProductDetail() {
             const directData = await directRes.json();
             const p = directData.product || directData;
 
-            // تحقق إضافي أن البيانات التي رجعت هي فعلاً للمنتج المطلوب (تم توسيع الشرط ليشمل ID)
-            if (p) {
-              // نتحقق من جميع الحقول المحتملة
-              if (
-                String(p.id) === String(productId) ||
-                String(p.modelId) === String(productId) ||
-                String(p.master_code) === String(productId)
-              ) {
-                foundProduct = p;
-              } else {
-                // في حالة الجلب المباشر الناجح، غالباً ما يكون المنتج هو المطلوب حتى لو اختلف المعرف قليلاً
-                // لذا نقبله كحل أخير إذا كان الكائن صحيحاً
-                foundProduct = p;
-              }
+            // ✅ التعديل هنا: نقبل المنتج فقط إذا تطابق مع المعرف المطلوب
+            if (p && isProductMatch(p, productId)) {
+              foundProduct = p;
+            } else {
+              console.log(
+                "Direct fetch returned mismatched product:",
+                p?.modelId
+              );
             }
           }
         } catch (e) {
           console.log("Direct fetch error", e);
         }
 
-        // محاولة 2: بحث (مع فلترة النتائج بدقة)
+        // محاولة 2: بحث
         if (!foundProduct) {
           try {
             const searchRes = await fetch(`/api/products?search=${productId}`);
@@ -176,14 +175,9 @@ export default function ProductDetail() {
               const searchData = await searchRes.json();
               const list = searchData.products || [];
 
-              // ⚠️ هام جداً: نأخذ فقط التطابق التام، لا نأخذ أول نتيجة عشوائية
-              // تم إضافة id للبحث
-              foundProduct = list.find(
-                (p: any) =>
-                  String(p.id) === String(productId) ||
-                  String(p.modelId) === String(productId) ||
-                  String(p.master_code) === String(productId) ||
-                  String(p.item_code) === String(productId)
+              // نبحث عن تطابق تام داخل نتائج البحث
+              foundProduct = list.find((p: any) =>
+                isProductMatch(p, productId)
               );
             }
           } catch (e) {
@@ -193,7 +187,6 @@ export default function ProductDetail() {
       }
 
       if (foundProduct) {
-        // ✅ تنظيف وترتيب الألوان لمنع ظهور ألوان غريبة
         foundProduct.variants = processVariants(
           foundProduct.variants,
           foundProduct.master_code,
@@ -202,7 +195,6 @@ export default function ProductDetail() {
 
         setProduct(foundProduct);
 
-        // ✅ منطق المنتجات المشابهة (مع التحقق من وجود تصنيف)
         let similar = [];
         if (allProductsList.length > 0 && foundProduct.category) {
           similar = allProductsList
@@ -213,7 +205,6 @@ export default function ProductDetail() {
             )
             .slice(0, 4);
         } else if (foundProduct.category) {
-          // جلب منتجات مشابهة من السيرفر فقط إذا كان لدينا تصنيف ولم نجد محلياً
           try {
             const simRes = await fetch(
               `/api/products?category=${encodeURIComponent(
@@ -230,7 +221,6 @@ export default function ProductDetail() {
         }
         setSimilarProducts(similar);
 
-        // إعداد القيم الافتراضية
         if (foundProduct.variants && foundProduct.variants.length > 0) {
           const firstVariant = foundProduct.variants[0];
           setSelectedColor(firstVariant.color);
