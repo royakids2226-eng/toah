@@ -13,7 +13,6 @@ interface Product {
   description: string;
   master_code?: string;
   item_code?: string;
-  // خصائص الصور المحتملة
   image?: string;
   imageUrl?: string;
   variants: Array<{
@@ -32,16 +31,6 @@ interface Product {
   stor_id?: number;
 }
 
-interface QuantityData {
-  [modelId: string]: {
-    [color: string]: {
-      totalQty: number;
-      sizes: { [size: string]: number };
-      itemCodes: { [size: string]: string };
-    };
-  };
-}
-
 export default function ProductDetail() {
   const params = useParams();
   const productId = params.id as string;
@@ -56,7 +45,6 @@ export default function ProductDetail() {
   const [currentItemCode, setCurrentItemCode] = useState<string>("");
   const [whatsappNumber, setWhatsappNumber] = useState<string>("");
 
-  // ✅ التحقق من حالة الموظف
   const isEmployee = () => {
     try {
       const employee = localStorage.getItem("employee");
@@ -69,14 +57,12 @@ export default function ProductDetail() {
 
   const employee = isEmployee();
 
-  // ✅ جلب معلومات الشركة للحصول على رقم الهاتف
   useEffect(() => {
     const fetchCompanyInfo = async () => {
       try {
         const response = await fetch("/api/company");
         if (response.ok) {
           const data = await response.json();
-          // نستخدم الهاتف 1، وإذا لم يوجد نستخدم الهاتف 2، وإذا لم يوجد نستخدم رقم افتراضي
           const phone = data.phone1 || data.phone2 || "201234567890";
           setWhatsappNumber(phone);
         }
@@ -88,144 +74,180 @@ export default function ProductDetail() {
     fetchCompanyInfo();
   }, []);
 
-  // ✅ دالة جلب تفاصيل المنتج
+  // ✅ دالة مساعدة لترتيب المتغيرات
+  const sortVariants = (variants: any[]) => {
+    if (!variants || variants.length === 0) return [];
+    return [...variants].sort((a, b) => Number(a.id) - Number(b.id));
+  };
+
+  // ✅ دالة جلب تفاصيل المنتج (تم تحسينها لحل مشكلة الـ 50 منتج)
   const fetchProductDetails = async () => {
     try {
       setLoading(true);
-      const endpoint = employee ? "/api/getAllData?employee=true" : "/api/getAllData";
 
-      const response = await fetch(endpoint);
-
-      if (!response.ok) {
-        throw new Error(`فشل في جلب البيانات: ${response.status}`);
-      }
-
-      const data = await response.json();
-      
-      if (!data.success) {
-        throw new Error(data.error || "فشل في تحميل البيانات");
-      }
-      
-      const productsList: Product[] = data.products || [];
-
-      // ✅ البحث عن المنتج الحالي
       let foundProduct: Product | undefined;
+      let allProductsList: Product[] = [];
 
-      foundProduct = productsList.find((p) => p.modelId === productId);
+      // الخطوة 1: محاولة الجلب السريع من القائمة العامة (للاستفادة من الكاش والمنتجات المشابهة)
+      try {
+        const endpoint = employee
+          ? "/api/getAllData?employee=true"
+          : "/api/getAllData";
+        const response = await fetch(endpoint);
 
-      if (!foundProduct) {
-        foundProduct = productsList.find((p) => p.master_code === productId);
-      }
-
-      if (!foundProduct) {
-        foundProduct = productsList.find((p) => p.item_code === productId);
-      }
-
-      if (foundProduct) {
-        // 🔥🔥🔥 التعديل الجذري للترتيب هنا 🔥🔥🔥
-        // 1. التأكد من وجود المتغيرات
-        if (foundProduct.variants && foundProduct.variants.length > 0) {
-            // 2. إنشاء نسخة جديدة للمصفوفة لضمان تحديث الرياكت
-            const sortedVariants = [...foundProduct.variants].sort((a, b) => {
-                // 3. تحويل المعرفات لأرقام لضمان الترتيب الحسابي (1، 2، 3)
-                // الترتيب التصاعدي يعني أن رقم 1 سيكون في الاندكس 0
-                // في العرض العربي (RTL)، العنصر الأول يظهر في اليمين
-                return Number(a.id) - Number(b.id);
-            });
-            
-            // 4. إعادة تعيين المتغيرات المرتبة للمنتج
-            foundProduct.variants = sortedVariants;
-        } else {
-            // ضمان وجود مصفوفة فارغة لتجنب الأخطاء
-            foundProduct.variants = [];
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && data.products) {
+            allProductsList = data.products;
+            foundProduct = allProductsList.find(
+              (p) =>
+                p.modelId === productId ||
+                p.master_code === productId ||
+                p.item_code === productId
+            );
+          }
         }
-        
+      } catch (err) {
+        console.warn(
+          "فشل الجلب من القائمة العامة، سيتم تجربة الجلب المباشر",
+          err
+        );
+      }
+
+      // الخطوة 2: إذا لم نجد المنتج في القائمة العامة (لأنه بعد الـ 50)، نطلبه مباشرة من السيرفر
+      if (!foundProduct) {
+        console.log(
+          "المنتج غير موجود في القائمة العامة، جاري البحث المباشر..."
+        );
+
+        // محاولة 1: جلب مباشر بالـ ID
+        try {
+          const directRes = await fetch(`/api/products/${productId}`);
+          if (directRes.ok) {
+            const directData = await directRes.json();
+            // دعم صيغ مختلفة للرد
+            const p = directData.product || directData;
+            if (p && (p.modelId || p.master_code)) {
+              foundProduct = p;
+            }
+          }
+        } catch (e) {
+          console.log("Direct fetch error", e);
+        }
+
+        // محاولة 2: بحث متقدم (إذا فشل الجلب المباشر)
+        if (!foundProduct) {
+          try {
+            // إزالة الليميت أو زيادته للبحث
+            const searchRes = await fetch(`/api/products?search=${productId}`);
+            if (searchRes.ok) {
+              const searchData = await searchRes.json();
+              const list = searchData.products || [];
+              foundProduct = list.find(
+                (p: any) =>
+                  p.modelId === productId ||
+                  p.master_code === productId ||
+                  p.item_code === productId
+              );
+            }
+          } catch (e) {
+            console.log("Search fetch error", e);
+          }
+        }
+      }
+
+      // الخطوة 3: إعداد بيانات المنتج للعرض
+      if (foundProduct) {
+        // ترتيب الألوان
+        if (foundProduct.variants) {
+          foundProduct.variants = sortVariants(foundProduct.variants);
+        } else {
+          foundProduct.variants = [];
+        }
+
         setProduct(foundProduct);
 
-        // ✅ البحث عن المنتجات المشابهة
-        const similar = productsList
-          .filter(
-            (p) =>
-              p.modelId !== foundProduct!.modelId &&
-              p.category === foundProduct!.category
-          )
-          .slice(0, 4);
-
+        // إعداد المنتجات المشابهة
+        let similar = [];
+        if (allProductsList.length > 0) {
+          similar = allProductsList
+            .filter(
+              (p) =>
+                p.category === foundProduct!.category &&
+                p.modelId !== foundProduct!.modelId
+            )
+            .slice(0, 4);
+        } else {
+          // إذا لم تكن القائمة العامة موجودة، نحاول جلب مشابهين بطلب منفصل
+          try {
+            const simRes = await fetch(
+              `/api/products?category=${encodeURIComponent(
+                foundProduct.category
+              )}&limit=4`
+            );
+            if (simRes.ok) {
+              const simData = await simRes.json();
+              similar = (simData.products || []).filter(
+                (p: any) => p.modelId !== foundProduct!.modelId
+              );
+            }
+          } catch (e) {}
+        }
         setSimilarProducts(similar);
 
-        // ✅ تعيين القيم الافتراضية (الآن ستأخذ أول لون بعد الترتيب)
+        // تعيين القيم الافتراضية
         if (foundProduct.variants && foundProduct.variants.length > 0) {
           const firstVariant = foundProduct.variants[0];
           setSelectedColor(firstVariant.color);
-          
-          setCurrentItemCode(firstVariant.itemCode || foundProduct.item_code || "");
-          
+          setCurrentItemCode(
+            firstVariant.itemCode || foundProduct.item_code || ""
+          );
+
           if (firstVariant.sizes && firstVariant.sizes.length > 0) {
             const firstSize = firstVariant.sizes[0];
             setSelectedSize(firstSize);
             updateItemCodeForSize(firstVariant, firstSize, foundProduct);
           }
         } else {
-            // حالة المنتج بدون ألوان
-            setCurrentItemCode(foundProduct.item_code || "");
+          setCurrentItemCode(foundProduct.item_code || "");
         }
+      } else {
+        // إذا فشلت كل المحاولات
+        setProduct(null);
       }
     } catch (error: any) {
-      console.error("❌ Error fetching product:", error);
-      
-      // ✅ محاولة استخدام API المنتجات كحل بديل
-      try {
-        const fallbackResponse = await fetch(`/api/products?search=${productId}&limit=50`);
-        if (fallbackResponse.ok) {
-          const fallbackData = await fallbackResponse.json();
-          const productsList: Product[] = fallbackData.products || [];
-          
-          const foundProduct = productsList.find((p) => 
-            p.modelId === productId || 
-            p.master_code === productId
-          );
-          
-          if (foundProduct) {
-            // ترتيب المتغيرات في حالة الفولباك أيضاً
-            if (foundProduct.variants && foundProduct.variants.length > 0) {
-                foundProduct.variants = [...foundProduct.variants].sort((a, b) => Number(a.id) - Number(b.id));
-            } else {
-                foundProduct.variants = [];
-            }
-            setProduct(foundProduct);
-          }
-        }
-      } catch (fallbackError) {
-        console.error("❌ فشل في الحل البديل:", fallbackError);
-      }
+      console.error("❌ Error in fetchProductDetails:", error);
+      setProduct(null);
     } finally {
       setLoading(false);
     }
   };
 
-  // ✅ دالة لتحديث itemCode بناءً على اللون والمقاس
-  const updateItemCodeForSize = (variant: any, size: string, prod: Product | null = product) => {
+  const updateItemCodeForSize = (
+    variant: any,
+    size: string,
+    prod: Product | null = product
+  ) => {
     if (!variant) return;
-    
+
     let newItemCode = "";
-    
     if (variant.sizeItemCodes && variant.sizeItemCodes[size]) {
       newItemCode = variant.sizeItemCodes[size];
-    }
-    else if (variant.itemCode) {
+    } else if (variant.itemCode) {
       newItemCode = variant.itemCode;
-    }
-    else if (prod?.item_code) {
+    } else if (prod?.item_code) {
       newItemCode = prod.item_code;
     }
-    
+
     if (newItemCode && newItemCode !== currentItemCode) {
       setCurrentItemCode(newItemCode);
     }
   };
 
   useEffect(() => {
-    fetchProductDetails();
+    if (productId) {
+      fetchProductDetails();
+    }
   }, [productId]);
 
   const selectedVariant = product?.variants?.find(
@@ -233,31 +255,24 @@ export default function ProductDetail() {
   );
 
   const getTotalColorQuantity = (color: string) => {
-    if (!employee) return 999; 
-
+    if (!employee) return 999;
     const variant = product?.variants?.find((v) => v.color === color);
     if (!variant) return 0;
-
     return variant.cur_qty || variant.totalColorQuantity || 0;
   };
 
   const getSizeQuantity = () => {
-    if (!employee) return 999; 
-
-    // إذا لم يكن هناك متغيرات، استخدم كمية المنتج العامة
+    if (!employee) return 999;
     if (!product?.variants || product.variants.length === 0) {
-        return product?.cur_qty || 0;
+      return product?.cur_qty || 0;
     }
-
     if (!selectedVariant || !selectedSize) return 0;
-
     if (
       selectedVariant.sizeQuantities &&
       selectedVariant.sizeQuantities[selectedSize] !== undefined
     ) {
       return selectedVariant.sizeQuantities[selectedSize];
     }
-
     return selectedVariant.cur_qty || 0;
   };
 
@@ -265,28 +280,20 @@ export default function ProductDetail() {
 
   const handleAddToCart = () => {
     if (!product) return;
-
     if (employee && currentSizeQuantity === 0) {
       alert("⛔ هذا المنتج غير متوفر حالياً في المخزن");
       return;
     }
-
-    const finalColor = selectedColor || product.variants?.[0]?.color || "افتراضي";
+    const finalColor =
+      selectedColor || product.variants?.[0]?.color || "افتراضي";
     const finalSize = selectedSize || selectedVariant?.sizes?.[0] || "ONE SIZE";
 
-    addToCart(
-      product,          
-      finalColor,       
-      finalSize,        
-      quantity          
-    );
-
+    addToCart(product, finalColor, finalSize, quantity);
     alert(`✅ تم إضافة "${product.description}" إلى السلة`);
   };
 
   const handleWhatsApp = () => {
     if (!product) return;
-
     const productCode = product.master_code || product.modelId;
     const availability = employee
       ? currentSizeQuantity > 0
@@ -311,10 +318,8 @@ export default function ProductDetail() {
   const handleColorSelect = (color: string) => {
     setSelectedColor(color);
     const newVariant = product?.variants?.find((v) => v.color === color);
-    
     if (newVariant) {
       setCurrentItemCode(newVariant.itemCode || product?.item_code || "");
-      
       if (newVariant.sizes && newVariant.sizes.length > 0) {
         const firstSize = newVariant.sizes[0];
         setSelectedSize(firstSize);
@@ -340,13 +345,9 @@ export default function ProductDetail() {
 
   const getQuantityText = (qty: number, size?: string) => {
     if (!employee) return "✅ متوفر";
-
     if (qty === 0) return "⛔ غير متوفر";
     if (qty <= 5) return `⚠️ آخر ${qty}`;
-
-    if (size) {
-      return `✅ متوفر (${qty}) - ${size}`;
-    }
+    if (size) return `✅ متوفر (${qty}) - ${size}`;
     return `✅ متوفر (${qty})`;
   };
 
@@ -390,21 +391,17 @@ export default function ProductDetail() {
     );
   }
 
-  // دالة شاملة لجلب الصورة
   const getDisplayImage = () => {
-    // 1. صورة اللون المختار
     if (selectedVariant?.imageUrl) return selectedVariant.imageUrl;
-    
-    // 2. إذا لم يوجد لون مختار أو صورته فارغة، نأخذ صورة أول متغير (بعد الترتيب)
-    if (product.variants && product.variants.length > 0 && product.variants[0].imageUrl) {
-        return product.variants[0].imageUrl;
+    if (
+      product.variants &&
+      product.variants.length > 0 &&
+      product.variants[0].imageUrl
+    ) {
+      return product.variants[0].imageUrl;
     }
-
-    // 3. صورة المنتج الجذرية
     if (product.image) return product.image;
     if (product.imageUrl) return product.imageUrl;
-
-    // 4. صورة افتراضية
     return "https://via.placeholder.com/600x800/EFEFEF/666666?text=No+Image";
   };
 
@@ -452,10 +449,8 @@ export default function ProductDetail() {
 
         <div className="bg-white rounded-lg shadow-lg overflow-hidden mb-12">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 p-8">
-            
             {/* 📸 العمود الأيمن: صور المنتج */}
             <div>
-              {/* الصورة الرئيسية */}
               <div className="aspect-[3/4] overflow-hidden rounded-lg bg-white border border-gray-200 shadow-sm">
                 <img
                   src={mainImage}
@@ -468,7 +463,6 @@ export default function ProductDetail() {
                 />
               </div>
 
-              {/* معرض الصور المصغرة - مرتبة */}
               {product.variants && product.variants.length > 1 && (
                 <div className="mt-4">
                   <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent">
@@ -498,7 +492,6 @@ export default function ProductDetail() {
                 </div>
               )}
 
-              {/* معلومات كود المنتج */}
               <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
                 <h4 className="font-medium text-gray-700 mb-2">كود المنتج:</h4>
                 <div className="flex items-center justify-between">
@@ -558,7 +551,6 @@ export default function ProductDetail() {
                 </span>
               </div>
 
-              {/* اختيار اللون - مرتب */}
               {product.variants && product.variants.length > 0 && (
                 <div>
                   <h3 className="text-lg font-medium text-gray-900 mb-3">
@@ -599,7 +591,6 @@ export default function ProductDetail() {
                 </div>
               )}
 
-              {/* اختيار المقاس */}
               {selectedVariant?.sizes && selectedVariant.sizes.length > 0 && (
                 <div>
                   <h3 className="text-lg font-medium text-gray-900 mb-3">
@@ -613,11 +604,11 @@ export default function ProductDetail() {
                   <div className="flex flex-wrap gap-3">
                     {selectedVariant.sizes.map((size) => {
                       const sizeQty =
-                        selectedVariant.sizeQuantities?.[size] || 
-                        selectedVariant.cur_qty || 
+                        selectedVariant.sizeQuantities?.[size] ||
+                        selectedVariant.cur_qty ||
                         0;
                       const displayQty = employee ? sizeQty : 999;
-                      
+
                       return (
                         <button
                           key={size}
@@ -645,7 +636,6 @@ export default function ProductDetail() {
                 </div>
               )}
 
-              {/* الكمية */}
               <div>
                 <h3 className="text-lg font-medium text-gray-900 mb-3">
                   الكمية
@@ -671,7 +661,6 @@ export default function ProductDetail() {
                 </div>
               </div>
 
-              {/* الأزرار */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <button
                   onClick={handleAddToCart}
@@ -717,7 +706,6 @@ export default function ProductDetail() {
                 </button>
               </div>
 
-              {/* معلومات إضافية */}
               <div className="border-t border-gray-200 pt-6">
                 <h3 className="text-lg font-medium text-gray-900 mb-3">
                   معلومات المنتج
@@ -732,7 +720,6 @@ export default function ProductDetail() {
           </div>
         </div>
 
-        {/* منتجات مشابهة */}
         {similarProducts.length > 0 && (
           <div className="bg-white rounded-lg shadow-lg overflow-hidden p-8">
             <div className="mb-6">
