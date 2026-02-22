@@ -74,13 +74,36 @@ export default function ProductDetail() {
     fetchCompanyInfo();
   }, []);
 
-  // ✅ دالة مساعدة لترتيب المتغيرات
-  const sortVariants = (variants: any[]) => {
+  // ✅ دالة لترتيب وتنظيف المتغيرات (استبعاد الألوان الدخيلة)
+  const processVariants = (
+    variants: any[],
+    masterCode?: string,
+    modelId?: string
+  ) => {
     if (!variants || variants.length === 0) return [];
-    return [...variants].sort((a, b) => Number(a.id) - Number(b.id));
+
+    // 1. ترتيب حسب الـ ID
+    let processed = [...variants].sort((a, b) => Number(a.id) - Number(b.id));
+
+    // 2. فلترة صارمة: إذا كان لدينا MasterCode، نستبعد المتغيرات التي لا تحتويه (اختياري حسب دقة بياناتك)
+    // هذه الخطوة تمنع ظهور ألوان منتج "501" داخل منتج "50"
+    if (masterCode && masterCode.length > 2) {
+      processed = processed.filter((v) => {
+        // إذا لم يكن للمتغير كود، نقبله مؤقتاً
+        if (!v.itemCode) return true;
+        // إذا كان للمتغير كود، يجب أن يحتوي على كود المنتج الأصلي أو يكون مطابقاً
+        // نستخدم toLowerCase لتجنب مشاكل الحروف الكبيرة والصغيرة
+        const vCode = v.itemCode.toLowerCase();
+        const mCode = masterCode.toLowerCase();
+        const mid = modelId ? modelId.toLowerCase() : "";
+
+        return vCode.includes(mCode) || (mid && vCode.includes(mid));
+      });
+    }
+
+    return processed;
   };
 
-  // ✅ دالة جلب تفاصيل المنتج (تم تحسينها لحل مشكلة الـ 50 منتج)
   const fetchProductDetails = async () => {
     try {
       setLoading(true);
@@ -88,7 +111,7 @@ export default function ProductDetail() {
       let foundProduct: Product | undefined;
       let allProductsList: Product[] = [];
 
-      // الخطوة 1: محاولة الجلب السريع من القائمة العامة (للاستفادة من الكاش والمنتجات المشابهة)
+      // الخطوة 1: محاولة الجلب من القائمة العامة (الأسرع)
       try {
         const endpoint = employee
           ? "/api/getAllData?employee=true"
@@ -99,35 +122,36 @@ export default function ProductDetail() {
           const data = await response.json();
           if (data.success && data.products) {
             allProductsList = data.products;
+            // بحث دقيق جداً (Exact Match)
             foundProduct = allProductsList.find(
               (p) =>
-                p.modelId === productId ||
-                p.master_code === productId ||
-                p.item_code === productId
+                String(p.modelId) === String(productId) ||
+                String(p.master_code) === String(productId) ||
+                String(p.item_code) === String(productId)
             );
           }
         }
       } catch (err) {
-        console.warn(
-          "فشل الجلب من القائمة العامة، سيتم تجربة الجلب المباشر",
-          err
-        );
+        console.warn("Using fallback fetch", err);
       }
 
-      // الخطوة 2: إذا لم نجد المنتج في القائمة العامة (لأنه بعد الـ 50)، نطلبه مباشرة من السيرفر
+      // الخطوة 2: الجلب المباشر (للمنتجات بعد الـ 50)
       if (!foundProduct) {
-        console.log(
-          "المنتج غير موجود في القائمة العامة، جاري البحث المباشر..."
-        );
+        console.log("Searching directly for product:", productId);
 
-        // محاولة 1: جلب مباشر بالـ ID
         try {
+          // محاولة 1: جلب مباشر
           const directRes = await fetch(`/api/products/${productId}`);
           if (directRes.ok) {
             const directData = await directRes.json();
-            // دعم صيغ مختلفة للرد
             const p = directData.product || directData;
-            if (p && (p.modelId || p.master_code)) {
+
+            // تحقق إضافي أن البيانات التي رجعت هي فعلاً للمنتج المطلوب
+            if (
+              p &&
+              (String(p.modelId) === String(productId) ||
+                String(p.master_code) === String(productId))
+            ) {
               foundProduct = p;
             }
           }
@@ -135,19 +159,20 @@ export default function ProductDetail() {
           console.log("Direct fetch error", e);
         }
 
-        // محاولة 2: بحث متقدم (إذا فشل الجلب المباشر)
+        // محاولة 2: بحث (مع فلترة النتائج بدقة)
         if (!foundProduct) {
           try {
-            // إزالة الليميت أو زيادته للبحث
             const searchRes = await fetch(`/api/products?search=${productId}`);
             if (searchRes.ok) {
               const searchData = await searchRes.json();
               const list = searchData.products || [];
+
+              // ⚠️ هام جداً: نأخذ فقط التطابق التام، لا نأخذ أول نتيجة عشوائية
               foundProduct = list.find(
                 (p: any) =>
-                  p.modelId === productId ||
-                  p.master_code === productId ||
-                  p.item_code === productId
+                  String(p.modelId) === String(productId) ||
+                  String(p.master_code) === String(productId) ||
+                  String(p.item_code) === String(productId)
               );
             }
           } catch (e) {
@@ -156,20 +181,19 @@ export default function ProductDetail() {
         }
       }
 
-      // الخطوة 3: إعداد بيانات المنتج للعرض
       if (foundProduct) {
-        // ترتيب الألوان
-        if (foundProduct.variants) {
-          foundProduct.variants = sortVariants(foundProduct.variants);
-        } else {
-          foundProduct.variants = [];
-        }
+        // ✅ تنظيف وترتيب الألوان لمنع ظهور ألوان غريبة
+        foundProduct.variants = processVariants(
+          foundProduct.variants,
+          foundProduct.master_code,
+          foundProduct.modelId
+        );
 
         setProduct(foundProduct);
 
-        // إعداد المنتجات المشابهة
+        // ✅ منطق المنتجات المشابهة (مع التحقق من وجود تصنيف)
         let similar = [];
-        if (allProductsList.length > 0) {
+        if (allProductsList.length > 0 && foundProduct.category) {
           similar = allProductsList
             .filter(
               (p) =>
@@ -177,8 +201,8 @@ export default function ProductDetail() {
                 p.modelId !== foundProduct!.modelId
             )
             .slice(0, 4);
-        } else {
-          // إذا لم تكن القائمة العامة موجودة، نحاول جلب مشابهين بطلب منفصل
+        } else if (foundProduct.category) {
+          // جلب منتجات مشابهة من السيرفر فقط إذا كان لدينا تصنيف
           try {
             const simRes = await fetch(
               `/api/products?category=${encodeURIComponent(
@@ -195,7 +219,7 @@ export default function ProductDetail() {
         }
         setSimilarProducts(similar);
 
-        // تعيين القيم الافتراضية
+        // إعداد القيم الافتراضية
         if (foundProduct.variants && foundProduct.variants.length > 0) {
           const firstVariant = foundProduct.variants[0];
           setSelectedColor(firstVariant.color);
@@ -212,7 +236,6 @@ export default function ProductDetail() {
           setCurrentItemCode(foundProduct.item_code || "");
         }
       } else {
-        // إذا فشلت كل المحاولات
         setProduct(null);
       }
     } catch (error: any) {
@@ -449,7 +472,6 @@ export default function ProductDetail() {
 
         <div className="bg-white rounded-lg shadow-lg overflow-hidden mb-12">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 p-8">
-            {/* 📸 العمود الأيمن: صور المنتج */}
             <div>
               <div className="aspect-[3/4] overflow-hidden rounded-lg bg-white border border-gray-200 shadow-sm">
                 <img
@@ -522,7 +544,6 @@ export default function ProductDetail() {
               )}
             </div>
 
-            {/* 📝 العمود الأيسر: معلومات المنتج */}
             <div className="space-y-6">
               <div>
                 <h1 className="text-3xl font-bold text-gray-900">
