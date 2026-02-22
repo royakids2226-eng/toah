@@ -75,13 +75,13 @@ export default function ProductDetail() {
     fetchCompanyInfo();
   }, []);
 
-  // دالة مساعدة للتحقق من تطابق المنتج مع الرابط
+  // دالة مطابقة مرنة للتحقق من المنتج
   const isProductMatch = (p: any, searchId: string) => {
     if (!p) return false;
-    const searchStr = String(searchId).toLowerCase();
+    const searchStr = String(searchId).trim().toLowerCase();
 
-    // مقارنة مع جميع الحقول المحتملة
-    const idMatch = p.id && String(p.id) === searchId;
+    // مقارنة مع جميع الحقول المحتملة مع تحويل القيم لنصوص
+    const idMatch = p.id && String(p.id) === searchId; // مقارنة دقيقة للـ ID
     const modelMatch =
       p.modelId && String(p.modelId).toLowerCase() === searchStr;
     const masterMatch =
@@ -122,7 +122,7 @@ export default function ProductDetail() {
       let foundProduct: Product | undefined;
       let allProductsList: Product[] = [];
 
-      // الخطوة 1: محاولة الجلب من القائمة العامة
+      // الخطوة 1: محاولة الجلب من القائمة العامة (للمنتجات الأولى)
       try {
         const endpoint = employee
           ? "/api/getAllData?employee=true"
@@ -142,47 +142,56 @@ export default function ProductDetail() {
         console.warn("Using fallback fetch", err);
       }
 
-      // الخطوة 2: الجلب المباشر (للمنتجات بعد الـ 50)
+      // الخطوة 2 (المعدلة): تجربة البحث أولاً (لأنها أكثر دقة من الجلب المباشر الذي يعيد منتج افتراضي خطأ)
       if (!foundProduct) {
-        console.log("Searching directly for product:", productId);
-
+        console.log("Try searching for product:", productId);
         try {
-          // محاولة 1: جلب مباشر
+          const searchRes = await fetch(`/api/products?search=${productId}`);
+          if (searchRes.ok) {
+            const searchData = await searchRes.json();
+            const list = searchData.products || [];
+            // البحث عن تطابق داخل النتائج
+            foundProduct = list.find((p: any) => isProductMatch(p, productId));
+
+            // إذا لم نجد تطابق تام، ولكن النتائج تحتوي على منتج واحد فقط، ربما يكون هو المطلوب
+            if (!foundProduct && list.length === 1) {
+              // تحقق بسيط للتأكد أنه ليس المنتج الافتراضي 3790 إلا إذا كنا نبحث عنه
+              const potential = list[0];
+              if (
+                String(potential.id) !== "3790" ||
+                String(productId) === "3790"
+              ) {
+                foundProduct = potential;
+              }
+            }
+          }
+        } catch (e) {
+          console.log("Search fetch error", e);
+        }
+      }
+
+      // الخطوة 3: الجلب المباشر (كحل أخير)
+      if (!foundProduct) {
+        console.log("Try direct fetch for product:", productId);
+        try {
           const directRes = await fetch(`/api/products/${productId}`);
           if (directRes.ok) {
             const directData = await directRes.json();
             const p = directData.product || directData;
 
-            // ✅ التعديل هنا: نقبل المنتج فقط إذا تطابق مع المعرف المطلوب
-            if (p && isProductMatch(p, productId)) {
-              foundProduct = p;
-            } else {
-              console.log(
-                "Direct fetch returned mismatched product:",
-                p?.modelId
-              );
+            // نقبل المنتج فقط إذا كان هناك تطابق، أو إذا كان لدينا يقين بأنه ليس المنتج الافتراضي الخاطئ
+            if (p) {
+              if (isProductMatch(p, productId)) {
+                foundProduct = p;
+              } else if (String(p.id) !== "3790") {
+                // إذا أرجع السيرفر منتجاً (ليس الافتراضي) ولم يطابق المعرف تماماً،
+                // قد يكون هناك اختلاف في التنسيق (ID vs Model)، سنقبله بحذر
+                foundProduct = p;
+              }
             }
           }
         } catch (e) {
           console.log("Direct fetch error", e);
-        }
-
-        // محاولة 2: بحث
-        if (!foundProduct) {
-          try {
-            const searchRes = await fetch(`/api/products?search=${productId}`);
-            if (searchRes.ok) {
-              const searchData = await searchRes.json();
-              const list = searchData.products || [];
-
-              // نبحث عن تطابق تام داخل نتائج البحث
-              foundProduct = list.find((p: any) =>
-                isProductMatch(p, productId)
-              );
-            }
-          } catch (e) {
-            console.log("Search fetch error", e);
-          }
         }
       }
 
