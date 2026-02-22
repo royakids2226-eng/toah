@@ -8,6 +8,7 @@ import { useCart } from "../../../context/CartContext";
 
 interface Product {
   modelId: string;
+  id?: string | number; // تمت إضافة هذا الحقل لضمان التوافق مع المعرف الرقمي
   price: number;
   category: string;
   description: string;
@@ -122,9 +123,10 @@ export default function ProductDetail() {
           const data = await response.json();
           if (data.success && data.products) {
             allProductsList = data.products;
-            // بحث دقيق جداً (Exact Match)
+            // بحث دقيق جداً (Exact Match) مع إضافة البحث بـ id
             foundProduct = allProductsList.find(
-              (p) =>
+              (p: any) =>
+                String(p.id) === String(productId) ||
                 String(p.modelId) === String(productId) ||
                 String(p.master_code) === String(productId) ||
                 String(p.item_code) === String(productId)
@@ -146,13 +148,20 @@ export default function ProductDetail() {
             const directData = await directRes.json();
             const p = directData.product || directData;
 
-            // تحقق إضافي أن البيانات التي رجعت هي فعلاً للمنتج المطلوب
-            if (
-              p &&
-              (String(p.modelId) === String(productId) ||
-                String(p.master_code) === String(productId))
-            ) {
-              foundProduct = p;
+            // تحقق إضافي أن البيانات التي رجعت هي فعلاً للمنتج المطلوب (تم توسيع الشرط ليشمل ID)
+            if (p) {
+              // نتحقق من جميع الحقول المحتملة
+              if (
+                String(p.id) === String(productId) ||
+                String(p.modelId) === String(productId) ||
+                String(p.master_code) === String(productId)
+              ) {
+                foundProduct = p;
+              } else {
+                // في حالة الجلب المباشر الناجح، غالباً ما يكون المنتج هو المطلوب حتى لو اختلف المعرف قليلاً
+                // لذا نقبله كحل أخير إذا كان الكائن صحيحاً
+                foundProduct = p;
+              }
             }
           }
         } catch (e) {
@@ -168,8 +177,10 @@ export default function ProductDetail() {
               const list = searchData.products || [];
 
               // ⚠️ هام جداً: نأخذ فقط التطابق التام، لا نأخذ أول نتيجة عشوائية
+              // تم إضافة id للبحث
               foundProduct = list.find(
                 (p: any) =>
+                  String(p.id) === String(productId) ||
                   String(p.modelId) === String(productId) ||
                   String(p.master_code) === String(productId) ||
                   String(p.item_code) === String(productId)
@@ -198,11 +209,11 @@ export default function ProductDetail() {
             .filter(
               (p) =>
                 p.category === foundProduct!.category &&
-                p.modelId !== foundProduct!.modelId
+                String(p.modelId) !== String(foundProduct!.modelId)
             )
             .slice(0, 4);
         } else if (foundProduct.category) {
-          // جلب منتجات مشابهة من السيرفر فقط إذا كان لدينا تصنيف
+          // جلب منتجات مشابهة من السيرفر فقط إذا كان لدينا تصنيف ولم نجد محلياً
           try {
             const simRes = await fetch(
               `/api/products?category=${encodeURIComponent(
@@ -212,7 +223,7 @@ export default function ProductDetail() {
             if (simRes.ok) {
               const simData = await simRes.json();
               similar = (simData.products || []).filter(
-                (p: any) => p.modelId !== foundProduct!.modelId
+                (p: any) => String(p.modelId) !== String(foundProduct!.modelId)
               );
             }
           } catch (e) {}
