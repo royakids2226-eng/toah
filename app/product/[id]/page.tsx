@@ -58,6 +58,7 @@ export default function ProductDetail() {
 
   const employee = isEmployee();
 
+  // جلب رقم الواتساب
   useEffect(() => {
     const fetchCompanyInfo = async () => {
       try {
@@ -71,34 +72,16 @@ export default function ProductDetail() {
         console.error("Error fetching company info:", error);
       }
     };
-
     fetchCompanyInfo();
   }, []);
 
-  // دالة مطابقة مرنة للتحقق من المنتج
-  const isProductMatch = (p: any, searchId: string) => {
-    if (!p) return false;
-    const searchStr = String(searchId).trim().toLowerCase();
-
-    // مقارنة مع جميع الحقول المحتملة مع تحويل القيم لنصوص
-    const idMatch = p.id && String(p.id) === searchId; // مقارنة دقيقة للـ ID
-    const modelMatch =
-      p.modelId && String(p.modelId).toLowerCase() === searchStr;
-    const masterMatch =
-      p.master_code && String(p.master_code).toLowerCase() === searchStr;
-    const itemMatch =
-      p.item_code && String(p.item_code).toLowerCase() === searchStr;
-
-    return idMatch || modelMatch || masterMatch || itemMatch;
-  };
-
+  // دالة ترتيب المتغيرات
   const processVariants = (
     variants: any[],
     masterCode?: string,
     modelId?: string
   ) => {
     if (!variants || variants.length === 0) return [];
-
     let processed = [...variants].sort((a, b) => Number(a.id) - Number(b.id));
 
     if (masterCode && masterCode.length > 2) {
@@ -106,96 +89,35 @@ export default function ProductDetail() {
         if (!v.itemCode) return true;
         const vCode = v.itemCode.toLowerCase();
         const mCode = masterCode.toLowerCase();
-        const mid = modelId ? modelId.toLowerCase() : "";
-
-        return vCode.includes(mCode) || (mid && vCode.includes(mid));
+        return vCode.includes(mCode);
       });
+      if (processed.length === 0) return variants;
     }
-
     return processed;
   };
 
-  const fetchProductDetails = async () => {
+  // ✅ الدالة الجديدة: جلب مباشر للمنتج فقط دون البحث في قوائم
+  const fetchProductOnly = async () => {
     try {
       setLoading(true);
+      console.log("Fetching product directly:", productId);
 
-      let foundProduct: Product | undefined;
-      let allProductsList: Product[] = [];
+      // طلب المنتج مباشرة من الـ API الخاص بالمنتج الواحد
+      // نستخدم encodeURIComponent لضمان وصول المعرف بشكل صحيح حتى لو كان يحتوي رموز
+      const response = await fetch(
+        `/api/products/${encodeURIComponent(productId)}`
+      );
 
-      // الخطوة 1: محاولة الجلب من القائمة العامة (للمنتجات الأولى)
-      try {
-        const endpoint = employee
-          ? "/api/getAllData?employee=true"
-          : "/api/getAllData";
-        const response = await fetch(endpoint);
-
-        if (response.ok) {
-          const data = await response.json();
-          if (data.success && data.products) {
-            allProductsList = data.products;
-            foundProduct = allProductsList.find((p: any) =>
-              isProductMatch(p, productId)
-            );
-          }
-        }
-      } catch (err) {
-        console.warn("Using fallback fetch", err);
+      if (!response.ok) {
+        throw new Error("Product fetch failed");
       }
 
-      // الخطوة 2 (المعدلة): تجربة البحث أولاً (لأنها أكثر دقة من الجلب المباشر الذي يعيد منتج افتراضي خطأ)
-      if (!foundProduct) {
-        console.log("Try searching for product:", productId);
-        try {
-          const searchRes = await fetch(`/api/products?search=${productId}`);
-          if (searchRes.ok) {
-            const searchData = await searchRes.json();
-            const list = searchData.products || [];
-            // البحث عن تطابق داخل النتائج
-            foundProduct = list.find((p: any) => isProductMatch(p, productId));
+      const data = await response.json();
+      // دعم اختلاف هيكلة الرد (سواء كان { product: ... } أو المنتج مباشرة)
+      const foundProduct = data.product || data;
 
-            // إذا لم نجد تطابق تام، ولكن النتائج تحتوي على منتج واحد فقط، ربما يكون هو المطلوب
-            if (!foundProduct && list.length === 1) {
-              // تحقق بسيط للتأكد أنه ليس المنتج الافتراضي 3790 إلا إذا كنا نبحث عنه
-              const potential = list[0];
-              if (
-                String(potential.id) !== "3790" ||
-                String(productId) === "3790"
-              ) {
-                foundProduct = potential;
-              }
-            }
-          }
-        } catch (e) {
-          console.log("Search fetch error", e);
-        }
-      }
-
-      // الخطوة 3: الجلب المباشر (كحل أخير)
-      if (!foundProduct) {
-        console.log("Try direct fetch for product:", productId);
-        try {
-          const directRes = await fetch(`/api/products/${productId}`);
-          if (directRes.ok) {
-            const directData = await directRes.json();
-            const p = directData.product || directData;
-
-            // نقبل المنتج فقط إذا كان هناك تطابق، أو إذا كان لدينا يقين بأنه ليس المنتج الافتراضي الخاطئ
-            if (p) {
-              if (isProductMatch(p, productId)) {
-                foundProduct = p;
-              } else if (String(p.id) !== "3790") {
-                // إذا أرجع السيرفر منتجاً (ليس الافتراضي) ولم يطابق المعرف تماماً،
-                // قد يكون هناك اختلاف في التنسيق (ID vs Model)، سنقبله بحذر
-                foundProduct = p;
-              }
-            }
-          }
-        } catch (e) {
-          console.log("Direct fetch error", e);
-        }
-      }
-
-      if (foundProduct) {
+      if (foundProduct && !foundProduct.error) {
+        // ترتيب الألوان
         foundProduct.variants = processVariants(
           foundProduct.variants,
           foundProduct.master_code,
@@ -204,32 +126,7 @@ export default function ProductDetail() {
 
         setProduct(foundProduct);
 
-        let similar = [];
-        if (allProductsList.length > 0 && foundProduct.category) {
-          similar = allProductsList
-            .filter(
-              (p) =>
-                p.category === foundProduct!.category &&
-                String(p.modelId) !== String(foundProduct!.modelId)
-            )
-            .slice(0, 4);
-        } else if (foundProduct.category) {
-          try {
-            const simRes = await fetch(
-              `/api/products?category=${encodeURIComponent(
-                foundProduct.category
-              )}&limit=4`
-            );
-            if (simRes.ok) {
-              const simData = await simRes.json();
-              similar = (simData.products || []).filter(
-                (p: any) => String(p.modelId) !== String(foundProduct!.modelId)
-              );
-            }
-          } catch (e) {}
-        }
-        setSimilarProducts(similar);
-
+        // إعداد القيم الافتراضية للعرض (أول لون وأول مقاس)
         if (foundProduct.variants && foundProduct.variants.length > 0) {
           const firstVariant = foundProduct.variants[0];
           setSelectedColor(firstVariant.color);
@@ -245,14 +142,41 @@ export default function ProductDetail() {
         } else {
           setCurrentItemCode(foundProduct.item_code || "");
         }
+
+        // ✅ بعد جلب المنتج بنجاح، نجلب المنتجات المشابهة (بشكل منفصل)
+        if (foundProduct.category) {
+          fetchSimilarProducts(
+            foundProduct.category,
+            foundProduct.modelId || foundProduct.id
+          );
+        }
       } else {
         setProduct(null);
       }
-    } catch (error: any) {
-      console.error("❌ Error in fetchProductDetails:", error);
+    } catch (error) {
+      console.error("❌ Error fetching product:", error);
       setProduct(null);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // دالة منفصلة لجلب المنتجات المشابهة
+  const fetchSimilarProducts = async (category: string, currentId: string) => {
+    try {
+      const res = await fetch(
+        `/api/products?category=${encodeURIComponent(category)}&limit=4`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        const list = data.products || [];
+        // استبعاد المنتج الحالي من القائمة المشابهة
+        setSimilarProducts(
+          list.filter((p: any) => String(p.modelId) !== String(currentId))
+        );
+      }
+    } catch (e) {
+      console.log("Error fetching similar products", e);
     }
   };
 
@@ -262,7 +186,6 @@ export default function ProductDetail() {
     prod: Product | null = product
   ) => {
     if (!variant) return;
-
     let newItemCode = "";
     if (variant.sizeItemCodes && variant.sizeItemCodes[size]) {
       newItemCode = variant.sizeItemCodes[size];
@@ -271,7 +194,6 @@ export default function ProductDetail() {
     } else if (prod?.item_code) {
       newItemCode = prod.item_code;
     }
-
     if (newItemCode && newItemCode !== currentItemCode) {
       setCurrentItemCode(newItemCode);
     }
@@ -279,9 +201,11 @@ export default function ProductDetail() {
 
   useEffect(() => {
     if (productId) {
-      fetchProductDetails();
+      fetchProductOnly();
     }
   }, [productId]);
+
+  // --- باقي دوال التعامل مع السلة والواتساب كما هي ---
 
   const selectedVariant = product?.variants?.find(
     (v) => v.color === selectedColor
