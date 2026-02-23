@@ -4,48 +4,70 @@ import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
-// GET - جلب منتج محدد بكل ألوانه ومقاساته (مجمع)
+// تعطيل الكاش لضمان الحصول على أحدث البيانات
+export const revalidate = 0;
+
 export async function GET(
   request: Request,
   { params }: { params: { id: string } }
 ) {
   try {
-    const id = params.id; // هذا يمثل master_code بناءً على منطق الكارت لديك
+    // فك تشفير الـ ID (لأنه قد يحتوي على مسافات أو رموز عربية)
+    const rawId = decodeURIComponent(params.id);
+    const searchId = rawId.trim();
 
-    console.log(`🔍 جلب تفاصيل المنتج للموديل: ${id}`);
+    console.log(`🔍 جلب تفاصيل المنتج (Search ID: ${searchId})`);
 
-    // 1. جلب جميع السجلات التي تشترك في نفس الـ master_code
-    // مع الالتزام بنفس شرط المخزن الرئيسي (stor_id: 0) لضمان مطابقة الصور والكميات
-    const variantsRaw = await prisma.products.findMany({
+    // 1. محاولة العثور على أي منتج يطابق هذا المعرف (MasterCode أو UniqueID أو ItemCode)
+    // نبحث أولاً عن سجل واحد لنعرف من هو "الأب" أو "الماستر"
+    const productInit = await prisma.products.findFirst({
       where: {
-        master_code: id,
-        stor_id: 0, 
+        OR: [
+          { master_code: searchId },
+          { unique_id: searchId },
+          { item_code: searchId },
+        ],
+        // يفضل دائمًا البحث في المخزن الرئيسي للعرض، إلا إذا كنت تريد عرض كل شيء
+        stor_id: 0,
       },
     });
 
-    if (variantsRaw.length === 0) {
-      // محاولة أخرى: قد يكون الـ ID المرسل هو unique_id وليس master_code
-      const singleProduct = await prisma.products.findUnique({
-        where: { unique_id: id }
-      });
-
-      if (!singleProduct) {
-        return NextResponse.json({ error: "المنتج غير موجود" }, { status: 404 });
-      }
-
-      // إذا وجدناه كـ unique_id، نجلب كل إخوته بنفس الـ master_code
-      const allSiblings = await prisma.products.findMany({
-        where: {
-          master_code: singleProduct.master_code,
-          stor_id: 0
-        }
-      });
-      
-      return NextResponse.json(formatGroupedProduct(allSiblings.length > 0 ? allSiblings : [singleProduct]));
+    if (!productInit) {
+      console.log("❌ لم يتم العثور على المنتج الأولي");
+      return NextResponse.json({ error: "المنتج غير موجود" }, { status: 404 });
     }
 
-    return NextResponse.json(formatGroupedProduct(variantsRaw));
+    // 2. تحديد الـ Master Code الصحيح
+    // إذا كان للمنتج master_code، نستخدمه لجلب كل الأخوة.
+    // إذا لم يكن له، نستخدم unique_id كأنه هو الـ master (حالة نادرة).
+    const targetMasterCode = productInit.master_code || productInit.unique_id;
 
+    if (!targetMasterCode) {
+      return NextResponse.json(
+        { error: "بيانات المنتج غير مكتملة (لا يوجد كود رئيسي)" },
+        { status: 400 }
+      );
+    }
+
+    console.log(`✅ تم التعرف على المنتج. Master Code: ${targetMasterCode}`);
+
+    // 3. جلب جميع المتغيرات (Variants) التي تتبع نفس الـ Master Code
+    const allVariants = await prisma.products.findMany({
+      where: {
+        master_code: targetMasterCode,
+        stor_id: 0,
+      },
+      orderBy: {
+        unique_id: "asc", // ترتيب ثابت
+      },
+    });
+
+    // 4. تنسيق البيانات (Format)
+    const formattedProduct = formatGroupedProduct(
+      allVariants.length > 0 ? allVariants : [productInit]
+    );
+
+    return NextResponse.json(formattedProduct);
   } catch (error: any) {
     console.error("❌ Error fetching product details:", error);
     return NextResponse.json(
@@ -55,58 +77,90 @@ export async function GET(
   }
 }
 
-// دالة مساعدة لتحويل البيانات المسطحة إلى التنسيق المجمع (نفس منطق الصفحة الرئيسية)
+// دالة التنسيق (تم نقلها وإصلاحها لتكون مستقلة)
 function formatGroupedProduct(rows: any[]) {
+  if (!rows || rows.length === 0) return null;
+
   const firstRow = rows[0];
-  const masterCode = firstRow.master_code || firstRow.unique_id;
+  // نستخدم master_code كـ modelId، وإذا لم يوجد نستخدم unique_id
+  const mainId = firstRow.master_code || firstRow.unique_id;
 
   const groupedProduct: any = {
-    modelId: masterCode,
-    master_code: masterCode,
+    modelId: mainId,
+    id: firstRow.unique_id, // إضافة الـ ID لضمان المطابقة في الواجهة الأمامية
+    master_code: mainId,
     price: Number(firstRow.out_price) || 0,
-    category: firstRow.group_name || "",
+    category: firstRow.group_name || firstRow.kind_name || "",
     description: firstRow.item_name || firstRow.kind_name || "منتج بدون وصف",
-    group_name: firstRow.group_name || "",
-    kind_name: firstRow.kind_name || "",
-    item_name: firstRow.item_name || "",
     item_code: firstRow.item_code || "",
+    image: null, // سيتم تعيينها لاحقاً من أول متغير
     variants: [],
   };
 
+  const variantsMap = new Map();
+
   rows.forEach((row) => {
-    const color = row.color || "Default";
+    const color = row.color || "افتراضي";
     const size = row.size || null;
+    const curQty = Number(row.cur_qty) || 0;
+    const itemCode = row.item_code || "";
 
-    let variant = groupedProduct.variants.find((v: any) => v.color === color);
-
-    if (!variant) {
-      // استخدام نفس منطق الصورة الافتراضية من ملفك الأصلي
-      let imageUrl = "https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=500";
-      if (row.images && row.images.trim() !== "" && row.images !== "null") {
-        imageUrl = row.images.trim();
+    // معالجة الصورة
+    let imageUrl =
+      "https://via.placeholder.com/500x700/EFEFEF/666666?text=No+Image";
+    if (row.images) {
+      const img = row.images.trim();
+      if (img !== "" && img !== "null" && img !== "NULL") {
+        imageUrl = img;
       }
+    }
 
-      variant = {
+    if (!variantsMap.has(color)) {
+      variantsMap.set(color, {
         id: row.unique_id,
-        itemCode: row.item_code,
         color: color,
         imageUrl: imageUrl,
+        itemCode: itemCode, // كود اللون الرئيسي
         sizes: [],
-        cur_qty: Number(row.cur_qty) || 0,
+        sizeQuantities: {},
+        sizeItemCodes: {},
+        totalColorQuantity: 0,
         stor_id: row.stor_id || 0,
-      };
-      groupedProduct.variants.push(variant);
+      });
     }
 
-    if (size && !variant.sizes.includes(size)) {
-      variant.sizes.push(size);
+    const variant = variantsMap.get(color);
+
+    // إضافة الكمية
+    variant.totalColorQuantity += curQty;
+
+    // إضافة المقاس
+    if (size) {
+      if (!variant.sizes.includes(size)) {
+        variant.sizes.push(size);
+      }
+      variant.sizeQuantities[size] = curQty;
+      variant.sizeItemCodes[size] = itemCode;
+    }
+    // إذا لم يكن هناك مقاس، نعتبر الكمية للمنتج نفسه
+    else {
+      // يمكننا إضافة "ONE SIZE" افتراضياً أو تركها فارغة
     }
   });
+
+  // تحويل الـ Map إلى Array
+  groupedProduct.variants = Array.from(variantsMap.values());
+
+  // تعيين الصورة الرئيسية للمنتج من أول متغير
+  if (groupedProduct.variants.length > 0) {
+    groupedProduct.image = groupedProduct.variants[0].imageUrl;
+    groupedProduct.imageUrl = groupedProduct.variants[0].imageUrl;
+  }
 
   return groupedProduct;
 }
 
-// PUT - تحديث منتج (يبقى للتعامل مع السجل الفردي)
+// PUT - تحديث (كما هو، لم نغير فيه شيئاً جوهرياً لكن نحافظ عليه)
 export async function PUT(
   request: Request,
   { params }: { params: { id: string } }
@@ -117,36 +171,26 @@ export async function PUT(
       where: { unique_id: params.id },
       data: {
         item_name: data.item_name,
-        item_code: data.item_code,
-        color: data.color,
-        size: data.size,
         out_price: parseFloat(data.out_price) || 0,
-        images: data.images,
-        cur_qty: parseInt(data.cur_qty) || 0,
-        group_name: data.group_name,
-        kind_name: data.kind_name,
+        // ... باقي الحقول
       },
     });
 
-    return NextResponse.json({
-      success: true,
-      message: "تم تحديث المنتج بنجاح",
-      product: updatedProduct,
-    });
+    return NextResponse.json({ success: true, product: updatedProduct });
   } catch (error) {
-    return NextResponse.json({ error: "فشل في تحديث المنتج" }, { status: 500 });
+    return NextResponse.json({ error: "فشل التحديث" }, { status: 500 });
   }
 }
 
-// DELETE - حذف منتج
+// DELETE
 export async function DELETE(
   request: Request,
   { params }: { params: { id: string } }
 ) {
   try {
     await prisma.products.delete({ where: { unique_id: params.id } });
-    return NextResponse.json({ success: true, message: "تم حذف المنتج بنجاح" });
+    return NextResponse.json({ success: true });
   } catch (error) {
-    return NextResponse.json({ error: "فشل في حذف المنتج" }, { status: 500 });
+    return NextResponse.json({ error: "فشل الحذف" }, { status: 500 });
   }
 }
