@@ -1,4 +1,3 @@
-// app/api/products/[id]/route.ts
 import { NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
 
@@ -12,24 +11,35 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
+    // استخراج باراميتر employee من الـ URL
+    const { searchParams } = new URL(request.url);
+    const employee = searchParams.get("employee") === "true";
+
     // فك تشفير الـ ID (لأنه قد يحتوي على مسافات أو رموز عربية)
     const rawId = decodeURIComponent(params.id);
     const searchId = rawId.trim();
 
-    console.log(`🔍 جلب تفاصيل المنتج (Search ID: ${searchId})`);
+    console.log(
+      `🔍 جلب تفاصيل المنتج (Search ID: ${searchId}, employee: ${employee})`
+    );
 
-    // 1. محاولة العثور على أي منتج يطابق هذا المعرف (MasterCode أو UniqueID أو ItemCode)
-    // نبحث أولاً عن سجل واحد لنعرف من هو "الأب" أو "الماستر"
+    // بناء شروط البحث حسب نوع المستخدم
+    const baseWhere: any = {
+      OR: [
+        { master_code: searchId },
+        { unique_id: searchId },
+        { item_code: searchId },
+      ],
+    };
+
+    // إذا لم يكن موظفاً، نقيد بالمخزن الرئيسي فقط (stor_id = 0)
+    if (!employee) {
+      baseWhere.stor_id = 0;
+    }
+
+    // 1. محاولة العثور على أي منتج يطابق هذا المعرف
     const productInit = await prisma.products.findFirst({
-      where: {
-        OR: [
-          { master_code: searchId },
-          { unique_id: searchId },
-          { item_code: searchId },
-        ],
-        // يفضل دائمًا البحث في المخزن الرئيسي للعرض، إلا إذا كنت تريد عرض كل شيء
-        stor_id: 0,
-      },
+      where: baseWhere,
     });
 
     if (!productInit) {
@@ -38,8 +48,6 @@ export async function GET(
     }
 
     // 2. تحديد الـ Master Code الصحيح
-    // إذا كان للمنتج master_code، نستخدمه لجلب كل الأخوة.
-    // إذا لم يكن له، نستخدم unique_id كأنه هو الـ master (حالة نادرة).
     const targetMasterCode = productInit.master_code || productInit.unique_id;
 
     if (!targetMasterCode) {
@@ -55,14 +63,14 @@ export async function GET(
     const allVariants = await prisma.products.findMany({
       where: {
         master_code: targetMasterCode,
-        stor_id: 0,
+        ...(!employee ? { stor_id: 0 } : {}), // نفس الشرط: إذا لم يكن موظفاً نأخذ فقط stor_id=0
       },
       orderBy: {
-        unique_id: "asc", // ترتيب ثابت
+        unique_id: "asc",
       },
     });
 
-    // 4. تنسيق البيانات (Format)
+    // 4. تنسيق البيانات
     const formattedProduct = formatGroupedProduct(
       allVariants.length > 0 ? allVariants : [productInit]
     );
@@ -77,23 +85,22 @@ export async function GET(
   }
 }
 
-// دالة التنسيق (تم نقلها وإصلاحها لتكون مستقلة)
+// دالة التنسيق (كما هي دون تغيير)
 function formatGroupedProduct(rows: any[]) {
   if (!rows || rows.length === 0) return null;
 
   const firstRow = rows[0];
-  // نستخدم master_code كـ modelId، وإذا لم يوجد نستخدم unique_id
   const mainId = firstRow.master_code || firstRow.unique_id;
 
   const groupedProduct: any = {
     modelId: mainId,
-    id: firstRow.unique_id, // إضافة الـ ID لضمان المطابقة في الواجهة الأمامية
+    id: firstRow.unique_id,
     master_code: mainId,
     price: Number(firstRow.out_price) || 0,
     category: firstRow.group_name || firstRow.kind_name || "",
     description: firstRow.item_name || firstRow.kind_name || "منتج بدون وصف",
     item_code: firstRow.item_code || "",
-    image: null, // سيتم تعيينها لاحقاً من أول متغير
+    image: null,
     variants: [],
   };
 
@@ -105,7 +112,6 @@ function formatGroupedProduct(rows: any[]) {
     const curQty = Number(row.cur_qty) || 0;
     const itemCode = row.item_code || "";
 
-    // معالجة الصورة
     let imageUrl =
       "https://via.placeholder.com/500x700/EFEFEF/666666?text=No+Image";
     if (row.images) {
@@ -120,7 +126,7 @@ function formatGroupedProduct(rows: any[]) {
         id: row.unique_id,
         color: color,
         imageUrl: imageUrl,
-        itemCode: itemCode, // كود اللون الرئيسي
+        itemCode: itemCode,
         sizes: [],
         sizeQuantities: {},
         sizeItemCodes: {},
@@ -130,11 +136,8 @@ function formatGroupedProduct(rows: any[]) {
     }
 
     const variant = variantsMap.get(color);
-
-    // إضافة الكمية
     variant.totalColorQuantity += curQty;
 
-    // إضافة المقاس
     if (size) {
       if (!variant.sizes.includes(size)) {
         variant.sizes.push(size);
@@ -142,16 +145,10 @@ function formatGroupedProduct(rows: any[]) {
       variant.sizeQuantities[size] = curQty;
       variant.sizeItemCodes[size] = itemCode;
     }
-    // إذا لم يكن هناك مقاس، نعتبر الكمية للمنتج نفسه
-    else {
-      // يمكننا إضافة "ONE SIZE" افتراضياً أو تركها فارغة
-    }
   });
 
-  // تحويل الـ Map إلى Array
   groupedProduct.variants = Array.from(variantsMap.values());
 
-  // تعيين الصورة الرئيسية للمنتج من أول متغير
   if (groupedProduct.variants.length > 0) {
     groupedProduct.image = groupedProduct.variants[0].imageUrl;
     groupedProduct.imageUrl = groupedProduct.variants[0].imageUrl;
@@ -160,7 +157,7 @@ function formatGroupedProduct(rows: any[]) {
   return groupedProduct;
 }
 
-// PUT - تحديث (كما هو، لم نغير فيه شيئاً جوهرياً لكن نحافظ عليه)
+// PUT - تحديث (كما هو)
 export async function PUT(
   request: Request,
   { params }: { params: { id: string } }

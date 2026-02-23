@@ -80,8 +80,7 @@ export default function ProductDetail() {
     if (!p) return false;
     const searchStr = String(searchId).trim().toLowerCase();
 
-    // مقارنة مع جميع الحقول المحتملة مع تحويل القيم لنصوص
-    const idMatch = p.id && String(p.id) === searchId; // مقارنة دقيقة للـ ID
+    const idMatch = p.id && String(p.id) === searchId;
     const modelMatch =
       p.modelId && String(p.modelId).toLowerCase() === searchStr;
     const masterMatch =
@@ -142,7 +141,7 @@ export default function ProductDetail() {
         console.warn("Using fallback fetch", err);
       }
 
-      // الخطوة 2 (المعدلة): تجربة البحث أولاً (لأنها أكثر دقة من الجلب المباشر الذي يعيد منتج افتراضي خطأ)
+      // الخطوة 2: تجربة البحث أولاً
       if (!foundProduct) {
         console.log("Try searching for product:", productId);
         try {
@@ -150,12 +149,9 @@ export default function ProductDetail() {
           if (searchRes.ok) {
             const searchData = await searchRes.json();
             const list = searchData.products || [];
-            // البحث عن تطابق داخل النتائج
             foundProduct = list.find((p: any) => isProductMatch(p, productId));
 
-            // إذا لم نجد تطابق تام، ولكن النتائج تحتوي على منتج واحد فقط، ربما يكون هو المطلوب
             if (!foundProduct && list.length === 1) {
-              // تحقق بسيط للتأكد أنه ليس المنتج الافتراضي 3790 إلا إذا كنا نبحث عنه
               const potential = list[0];
               if (
                 String(potential.id) !== "3790" ||
@@ -170,22 +166,23 @@ export default function ProductDetail() {
         }
       }
 
-      // الخطوة 3: الجلب المباشر (كحل أخير)
+      // الخطوة 3: الجلب المباشر (مع إضافة employee=true)
       if (!foundProduct) {
         console.log("Try direct fetch for product:", productId);
         try {
-          const directRes = await fetch(`/api/products/${productId}`);
+          // ✅ تعديل هنا: إضافة employee=true إذا كان المستخدم موظفاً
+          const url = employee
+            ? `/api/products/${productId}?employee=true`
+            : `/api/products/${productId}`;
+          const directRes = await fetch(url);
           if (directRes.ok) {
             const directData = await directRes.json();
             const p = directData.product || directData;
 
-            // نقبل المنتج فقط إذا كان هناك تطابق، أو إذا كان لدينا يقين بأنه ليس المنتج الافتراضي الخاطئ
             if (p) {
               if (isProductMatch(p, productId)) {
                 foundProduct = p;
               } else if (String(p.id) !== "3790") {
-                // إذا أرجع السيرفر منتجاً (ليس الافتراضي) ولم يطابق المعرف تماماً،
-                // قد يكون هناك اختلاف في التنسيق (ID vs Model)، سنقبله بحذر
                 foundProduct = p;
               }
             }
