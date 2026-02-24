@@ -6,6 +6,7 @@ import ProductCard from "../../components/ProductCard";
 import Pagination from "../../components/Pagination";
 
 interface Product {
+  id?: string | number;
   modelId: string;
   price: number;
   category: string;
@@ -46,7 +47,7 @@ export default function CategoryDetailPage({
   const [category, setCategory] = useState<Category | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  
+
   const [pagination, setPagination] = useState<PaginationInfo>({
     currentPage: 1,
     totalPages: 1,
@@ -71,7 +72,7 @@ export default function CategoryDetailPage({
   const fetchCategoryName = async () => {
     try {
       console.log(`🔍 جلب اسم التصنيف للـ ID: ${params.categoryId}`);
-      
+
       // ✅ محاولة جلب التصنيف من الـ API
       const response = await fetch(`/api/categories/${params.categoryId}`);
       if (response.ok) {
@@ -80,19 +81,21 @@ export default function CategoryDetailPage({
         setCategory(categoryData);
         return categoryData.name;
       }
-      
+
       // ✅ إذا فشل، جرب الـ API الآخر
-      const response2 = await fetch('/api/categories');
+      const response2 = await fetch("/api/categories");
       if (response2.ok) {
         const categories = await response2.json();
-        const foundCategory = categories.find((cat: Category) => cat.id.toString() === params.categoryId);
+        const foundCategory = categories.find(
+          (cat: Category) => cat.id.toString() === params.categoryId
+        );
         if (foundCategory) {
           console.log(`✅ وجدت التصنيف من القائمة:`, foundCategory);
           setCategory(foundCategory);
           return foundCategory.name;
         }
       }
-      
+
       console.log(`❌ لم أجد التصنيف للـ ID: ${params.categoryId}`);
       return null;
     } catch (error) {
@@ -106,41 +109,48 @@ export default function CategoryDetailPage({
     try {
       setLoading(true);
       const isEmployee = checkUserType();
-      
+
       // ✅ جلب اسم التصنيف أولاً
       const categoryName = await fetchCategoryName();
-      
+
       console.log(`📢 اسم التصنيف المستخدم للبحث: "${categoryName}"`);
-      
+
       // ✅ بناء URL مع أو بدون تصنيف
       const endpoint = isEmployee ? "/api/products/employee" : "/api/products";
       let url = `${endpoint}?page=${page}&limit=${limit}`;
-      
+
       if (categoryName) {
         url += `&category=${encodeURIComponent(categoryName)}`;
         console.log(`🌐 جلب المنتجات للتصنيف: ${url}`);
       } else {
         console.log(`🌐 جلب جميع المنتجات (بدون تصنيف): ${url}`);
       }
-      
+
       const response = await fetch(url);
-      
+
       if (!response.ok) {
         throw new Error("فشل في جلب البيانات");
       }
 
       const data = await response.json();
-      
+
       console.log(`📦 البيانات المستلمة: ${data.products?.length || 0} منتج`);
       console.log(`📊 معلومات الترقيم:`, data.pagination);
-      
-      setProducts(data.products || []);
-      
+
+      // التأكد من أن كل منتج يحتوي على modelId
+      const validProducts = (data.products || [])
+        .map((p: any) => ({
+          ...p,
+          modelId: p.modelId || p.master_code || p.id || p.unique_id || "",
+        }))
+        .filter((p: Product) => p.modelId); // إزالة المنتجات بدون modelId
+
+      setProducts(validProducts);
+
       // ✅ حفظ معلومات الترقيم
       if (data.pagination) {
         setPagination(data.pagination);
       }
-      
     } catch (err) {
       console.error("Error:", err);
       setError("حدث خطأ في تحميل البيانات");
@@ -158,7 +168,7 @@ export default function CategoryDetailPage({
   const handlePageChange = (page: number) => {
     console.log(`🔄 تغيير الصفحة إلى: ${page}`);
     fetchProducts(page, pagination.limit);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   // ✅ دالة تغيير عدد المنتجات في الصفحة
@@ -208,44 +218,54 @@ export default function CategoryDetailPage({
   return (
     <div className="min-h-screen bg-gray-50">
       <Header />
-      
+
       <main className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
         {/* رأس الصفحة */}
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900 mb-2">
             {category?.name || `التصنيف ${params.categoryId}`}
           </h1>
-          
+
           <div className="flex justify-between items-center mb-4">
             <p className="text-gray-600">
-              {products.length > 0 
-                ? `عرض ${Math.min((pagination.currentPage - 1) * pagination.limit + 1, pagination.totalProducts)} - ${Math.min(pagination.currentPage * pagination.limit, pagination.totalProducts)} من ${pagination.totalProducts} منتج`
-                : "لا توجد منتجات في هذا التصنيف"
-              }
+              {products.length > 0
+                ? `عرض ${Math.min(
+                    (pagination.currentPage - 1) * pagination.limit + 1,
+                    pagination.totalProducts
+                  )} - ${Math.min(
+                    pagination.currentPage * pagination.limit,
+                    pagination.totalProducts
+                  )} من ${pagination.totalProducts} منتج`
+                : "لا توجد منتجات في هذا التصنيف"}
             </p>
-            
+
             <div className="flex items-center gap-2">
-              <span className={`text-sm px-3 py-1 rounded-full ${
-                checkUserType() 
-                  ? "bg-blue-100 text-blue-800" 
-                  : "bg-green-100 text-green-800"
-              }`}>
+              <span
+                className={`text-sm px-3 py-1 rounded-full ${
+                  checkUserType()
+                    ? "bg-blue-100 text-blue-800"
+                    : "bg-green-100 text-green-800"
+                }`}
+              >
                 {checkUserType() ? "👔 موظف" : "👤 عميل"}
               </span>
             </div>
           </div>
-          
+
           {/* شريط معلومات مهمة */}
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
             <div className="flex items-center">
               <span className="text-blue-500 mr-2">ℹ️</span>
               <div>
                 <p className="text-blue-800 text-sm">
-                  <strong>معلومات:</strong> يتم عرض المنتجات الخاصة بتصنيف "{category?.name || params.categoryId}"
-                  {pagination.totalPages > 1 && ` على ${pagination.totalPages} صفحات`}
+                  <strong>معلومات:</strong> يتم عرض المنتجات الخاصة بتصنيف "
+                  {category?.name || params.categoryId}"
+                  {pagination.totalPages > 1 &&
+                    ` على ${pagination.totalPages} صفحات`}
                 </p>
                 <p className="text-blue-600 text-xs mt-1">
-                  الصفحة {pagination.currentPage} من {pagination.totalPages} • {pagination.totalProducts} منتج إجمالي
+                  الصفحة {pagination.currentPage} من {pagination.totalPages} •{" "}
+                  {pagination.totalProducts} منتج إجمالي
                 </p>
               </div>
             </div>
@@ -257,7 +277,10 @@ export default function CategoryDetailPage({
           <>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
               {products.map((product) => (
-                <ProductCard key={product.modelId} product={product} />
+                <ProductCard
+                  key={product.modelId || product.master_code || product.id}
+                  product={product}
+                />
               ))}
             </div>
 
@@ -292,10 +315,9 @@ export default function CategoryDetailPage({
               لا توجد منتجات
             </h3>
             <p className="text-gray-600 mb-6">
-              {category 
+              {category
                 ? `لا توجد منتجات في تصنيف "${category.name}"`
-                : "التصنيف غير موجود"
-              }
+                : "التصنيف غير موجود"}
             </p>
             <div className="flex gap-3 justify-center">
               <button
@@ -320,7 +342,7 @@ export default function CategoryDetailPage({
             <div className="text-sm text-gray-600">
               <span className="font-medium">خيارات العرض:</span>
             </div>
-            
+
             <div className="flex items-center gap-2">
               <span className="text-sm text-gray-600">عرض</span>
               <select
@@ -335,7 +357,7 @@ export default function CategoryDetailPage({
               </select>
               <span className="text-sm text-gray-600">في الصفحة</span>
             </div>
-            
+
             <button
               onClick={() => {
                 console.log("📋 معلومات كاملة:", {
@@ -344,22 +366,34 @@ export default function CategoryDetailPage({
                   productsCount: products.length,
                   pagination,
                 });
-                alert(`معلومات الصفحة:\nالتصنيف: ${category?.name || params.categoryId}\nالصفحة: ${pagination.currentPage}/${pagination.totalPages}\nالمنتجات: ${products.length}/${pagination.totalProducts}`);
+                alert(
+                  `معلومات الصفحة:\nالتصنيف: ${
+                    category?.name || params.categoryId
+                  }\nالصفحة: ${pagination.currentPage}/${
+                    pagination.totalPages
+                  }\nالمنتجات: ${products.length}/${pagination.totalProducts}`
+                );
               }}
               className="px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 text-sm"
             >
               عرض معلومات الصفحة
             </button>
           </div>
-          
+
           {/* معلومات تقنية للتصحيح */}
           <div className="mt-4 text-xs text-gray-400">
-            <p>URL: /category/{params.categoryId} | Category ID: {params.categoryId} | Category Name: {category?.name || "غير معروف"}</p>
-            <p>API Response: {pagination.totalPages} pages | {pagination.totalProducts} total products</p>
+            <p>
+              URL: /category/{params.categoryId} | Category ID:{" "}
+              {params.categoryId} | Category Name:{" "}
+              {category?.name || "غير معروف"}
+            </p>
+            <p>
+              API Response: {pagination.totalPages} pages |{" "}
+              {pagination.totalProducts} total products
+            </p>
           </div>
         </div>
       </main>
     </div>
   );
-  
 }

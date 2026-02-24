@@ -3,191 +3,204 @@ import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
-// تعطيل الكاش لضمان الحصول على أحدث البيانات
-export const revalidate = 0;
+export const dynamic = "force-dynamic";
 
-export async function GET(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
+export async function GET(request: Request) {
   try {
-    // استخراج باراميتر employee من الـ URL
     const { searchParams } = new URL(request.url);
-    const employee = searchParams.get("employee") === "true";
+    const category = searchParams.get("category");
+    const sub = searchParams.get("sub");
+    const search = searchParams.get("search");
+    const page = parseInt(searchParams.get("page") || "1");
+    const limit = parseInt(searchParams.get("limit") || "50");
+    const employeeView = searchParams.get("employee") === "true";
 
-    // فك تشفير الـ ID (لأنه قد يحتوي على مسافات أو رموز عربية)
-    const rawId = decodeURIComponent(params.id);
-    const searchId = rawId.trim();
-
-    console.log(
-      `🔍 جلب تفاصيل المنتج (Search ID: ${searchId}, employee: ${employee})`
-    );
-
-    // بناء شروط البحث حسب نوع المستخدم
-    const baseWhere: any = {
-      OR: [
-        { master_code: searchId },
-        { unique_id: searchId },
-        { item_code: searchId },
-      ],
-    };
-
-    // إذا لم يكن موظفاً، نقيد بالمخزن الرئيسي فقط (stor_id = 0)
-    if (!employee) {
-      baseWhere.stor_id = 0;
-    }
-
-    // 1. محاولة العثور على أي منتج يطابق هذا المعرف
-    const productInit = await prisma.products.findFirst({
-      where: baseWhere,
+    console.log("🔍 جلب المنتجات:", {
+      category,
+      sub,
+      search,
+      page,
+      limit,
+      employeeView,
     });
 
-    if (!productInit) {
-      console.log("❌ لم يتم العثور على المنتج الأولي");
-      return NextResponse.json({ error: "المنتج غير موجود" }, { status: 404 });
-    }
-
-    // 2. تحديد الـ Master Code الصحيح
-    const targetMasterCode = productInit.master_code || productInit.unique_id;
-
-    if (!targetMasterCode) {
-      return NextResponse.json(
-        { error: "بيانات المنتج غير مكتملة (لا يوجد كود رئيسي)" },
-        { status: 400 }
-      );
-    }
-
-    console.log(`✅ تم التعرف على المنتج. Master Code: ${targetMasterCode}`);
-
-    // 3. جلب جميع المتغيرات (Variants) التي تتبع نفس الـ Master Code
-    const allVariants = await prisma.products.findMany({
-      where: {
-        master_code: targetMasterCode,
-        ...(!employee ? { stor_id: 0 } : {}), // نفس الشرط: إذا لم يكن موظفاً نأخذ فقط stor_id=0
-      },
-      orderBy: {
-        unique_id: "asc",
-      },
-    });
-
-    // 4. تنسيق البيانات
-    const formattedProduct = formatGroupedProduct(
-      allVariants.length > 0 ? allVariants : [productInit]
-    );
-
-    return NextResponse.json(formattedProduct);
-  } catch (error: any) {
-    console.error("❌ Error fetching product details:", error);
-    return NextResponse.json(
-      { error: "فشل في جلب بيانات المنتج", details: error.message },
-      { status: 500 }
-    );
-  }
-}
-
-// دالة التنسيق (كما هي دون تغيير)
-function formatGroupedProduct(rows: any[]) {
-  if (!rows || rows.length === 0) return null;
-
-  const firstRow = rows[0];
-  const mainId = firstRow.master_code || firstRow.unique_id;
-
-  const groupedProduct: any = {
-    modelId: mainId,
-    id: firstRow.unique_id,
-    master_code: mainId,
-    price: Number(firstRow.out_price) || 0,
-    category: firstRow.group_name || firstRow.kind_name || "",
-    description: firstRow.item_name || firstRow.kind_name || "منتج بدون وصف",
-    item_code: firstRow.item_code || "",
-    image: null,
-    variants: [],
-  };
-
-  const variantsMap = new Map();
-
-  rows.forEach((row) => {
-    const color = row.color || "افتراضي";
-    const size = row.size || null;
-    const curQty = Number(row.cur_qty) || 0;
-    const itemCode = row.item_code || "";
-
-    let imageUrl =
-      "https://via.placeholder.com/500x700/EFEFEF/666666?text=No+Image";
-    if (row.images) {
-      const img = row.images.trim();
-      if (img !== "" && img !== "null" && img !== "NULL") {
-        imageUrl = img;
+    let categoryName = category;
+    if (category && !isNaN(parseInt(category))) {
+      const cat = await prisma.categories.findUnique({
+        where: { id: parseInt(category) },
+      });
+      if (cat) {
+        categoryName = cat.name;
       }
     }
 
-    if (!variantsMap.has(color)) {
-      variantsMap.set(color, {
-        id: row.unique_id,
-        color: color,
-        imageUrl: imageUrl,
-        itemCode: itemCode,
-        sizes: [],
-        sizeQuantities: {},
-        sizeItemCodes: {},
-        totalColorQuantity: 0,
-        stor_id: row.stor_id || 0,
-      });
+    const whereConditions: any = {};
+
+    if (!employeeView) {
+      whereConditions.cur_qty = { gt: 0 };
+      whereConditions.stor_id = 0;
     }
 
-    const variant = variantsMap.get(color);
-    variant.totalColorQuantity += curQty;
+    // معالجة شرط التصنيف
+    if (categoryName) {
+      whereConditions.OR = [
+        { group_name: { contains: categoryName, mode: "insensitive" } },
+        { kind_name: { contains: categoryName, mode: "insensitive" } },
+        { item_name: { contains: categoryName, mode: "insensitive" } },
+      ];
+    }
 
-    if (size) {
-      if (!variant.sizes.includes(size)) {
+    // معالجة شرط التصنيف الفرعي
+    if (sub) {
+      const subCondition = [
+        { kind_name: { contains: sub, mode: "insensitive" } },
+        { group_name: { contains: sub, mode: "insensitive" } },
+        { item_name: { contains: sub, mode: "insensitive" } },
+      ];
+      if (whereConditions.OR) {
+        whereConditions.OR.push(...subCondition);
+      } else {
+        whereConditions.OR = subCondition;
+      }
+    }
+
+    // معالجة شرط البحث
+    if (search) {
+      const searchCondition = [
+        { item_name: { contains: search, mode: "insensitive" } },
+        { item_code: { contains: search, mode: "insensitive" } },
+        { master_code: { contains: search, mode: "insensitive" } },
+        { color: { contains: search, mode: "insensitive" } },
+        { kind_name: { contains: search, mode: "insensitive" } },
+        { group_name: { contains: search, mode: "insensitive" } },
+      ];
+      if (whereConditions.OR) {
+        whereConditions.OR.push(...searchCondition);
+      } else {
+        whereConditions.OR = searchCondition;
+      }
+    }
+
+    // جلب جميع المنتجات المطابقة
+    const allProductsRaw = await prisma.products.findMany({
+      where: whereConditions,
+      orderBy: {
+        unique_id: "desc",
+      },
+    });
+
+    console.log(`📦 المنتجات الخام المجلوبة: ${allProductsRaw.length} منتج`);
+
+    // تجميع المنتجات حسب master_code
+    const groupedByMasterCode: { [key: string]: any } = {};
+
+    allProductsRaw.forEach((row) => {
+      const masterCode = row.master_code;
+      if (!masterCode) return;
+
+      const color = row.color || "Default";
+      const size = row.size || null;
+      const curQty = Number(row.cur_qty) || 0;
+
+      if (!groupedByMasterCode[masterCode]) {
+        groupedByMasterCode[masterCode] = {
+          modelId: masterCode,
+          master_code: masterCode,
+          price: row.out_price || 0,
+          category: row.group_name || row.kind_name || "",
+          description: row.item_name || row.kind_name || "منتج بدون وصف",
+          group_name: row.group_name || "",
+          kind_name: row.kind_name || "",
+          item_name: row.item_name || "",
+          item_code: row.item_code || "",
+          cur_qty: 0,
+          variants: [],
+        };
+      }
+
+      let variant = groupedByMasterCode[masterCode].variants.find(
+        (v: any) => v.color === color
+      );
+
+      if (!variant) {
+        let imageUrl =
+          "https://via.placeholder.com/500x700/EFEFEF/666666?text=No+Image";
+        if (row.images) {
+          const img = row.images.trim();
+          if (img !== "" && img !== "null" && img !== "NULL") {
+            if (!(img.startsWith("data:image") && img.length < 100)) {
+              imageUrl = img;
+            }
+          }
+        }
+
+        variant = {
+          id: row.unique_id,
+          itemCode: row.item_code,
+          color: color,
+          imageUrl: imageUrl,
+          sizes: [],
+          cur_qty: curQty,
+          stor_id: row.stor_id || 0,
+          sizeQuantities: {},
+        };
+        groupedByMasterCode[masterCode].variants.push(variant);
+      }
+
+      variant.cur_qty += curQty;
+      groupedByMasterCode[masterCode].cur_qty += curQty;
+
+      if (size && !variant.sizes.includes(size)) {
         variant.sizes.push(size);
       }
-      variant.sizeQuantities[size] = curQty;
-      variant.sizeItemCodes[size] = itemCode;
-    }
-  });
 
-  groupedProduct.variants = Array.from(variantsMap.values());
-
-  if (groupedProduct.variants.length > 0) {
-    groupedProduct.image = groupedProduct.variants[0].imageUrl;
-    groupedProduct.imageUrl = groupedProduct.variants[0].imageUrl;
-  }
-
-  return groupedProduct;
-}
-
-// PUT - تحديث (كما هو)
-export async function PUT(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
-  try {
-    const data = await request.json();
-    const updatedProduct = await prisma.products.update({
-      where: { unique_id: params.id },
-      data: {
-        item_name: data.item_name,
-        out_price: parseFloat(data.out_price) || 0,
-        // ... باقي الحقول
-      },
+      if (size) {
+        variant.sizeQuantities = variant.sizeQuantities || {};
+        variant.sizeQuantities[size] =
+          (variant.sizeQuantities[size] || 0) + curQty;
+      }
     });
 
-    return NextResponse.json({ success: true, product: updatedProduct });
-  } catch (error) {
-    return NextResponse.json({ error: "فشل التحديث" }, { status: 500 });
-  }
-}
+    const allGroupedProducts = Object.values(groupedByMasterCode).filter(
+      (product) => product.variants.length > 0
+    );
 
-// DELETE
-export async function DELETE(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
-  try {
-    await prisma.products.delete({ where: { unique_id: params.id } });
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    return NextResponse.json({ error: "فشل الحذف" }, { status: 500 });
+    console.log(
+      `🎯 المنتجات المجمعة النهائية: ${allGroupedProducts.length} موديل`
+    );
+
+    const totalProducts = allGroupedProducts.length;
+    const totalPages = Math.ceil(totalProducts / limit);
+    const skip = (page - 1) * limit;
+    const paginatedProducts = allGroupedProducts.slice(skip, skip + limit);
+
+    const hasNextPage = page < totalPages;
+    const hasPrevPage = page > 1;
+
+    return NextResponse.json({
+      success: true,
+      products: paginatedProducts,
+      pagination: {
+        currentPage: page,
+        totalPages: totalPages,
+        totalProducts: totalProducts,
+        limit: limit,
+        hasNextPage: hasNextPage,
+        hasPrevPage: hasPrevPage,
+      },
+      filters: {
+        category: categoryName,
+        sub: sub,
+        search: search,
+        employee: employeeView,
+      },
+    });
+  } catch (error: any) {
+    console.error("❌ Error in products API:", error);
+    return NextResponse.json({
+      success: false,
+      products: [],
+      error: "حدث خطأ في تحميل البيانات",
+    });
   }
 }
