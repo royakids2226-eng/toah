@@ -1,16 +1,16 @@
 import { NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
 
+// ✅ إنشاء الاتصال مباشرة هنا لتجاوز أي مشاكل في الاستيراد
 const prisma = new PrismaClient();
 
 export const dynamic = "force-dynamic";
 
-// ✅ دالة GET: تدعم التصدير والبحث
+// 1️⃣ دالة GET
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const category = searchParams.get("category");
-    const sub = searchParams.get("sub");
     const search = searchParams.get("search");
     const page = parseInt(searchParams.get("page") || "1");
     const limit = parseInt(searchParams.get("limit") || "50");
@@ -23,15 +23,11 @@ export async function GET(request: Request) {
       andConditions.push({ cur_qty: { gt: 0 }, stor_id: 0 });
     }
 
-    // شرط البحث
     if (search) {
       const searchOR: any[] = [
         { item_name: { contains: search, mode: "insensitive" } },
         { item_code: { contains: search, mode: "insensitive" } },
         { master_code: { contains: search, mode: "insensitive" } },
-        { color: { contains: search, mode: "insensitive" } },
-        { kind_name: { contains: search, mode: "insensitive" } },
-        { group_name: { contains: search, mode: "insensitive" } },
       ];
       if (!isNaN(Number(search))) {
         searchOR.push({ unique_id: { equals: Number(search) } });
@@ -39,7 +35,6 @@ export async function GET(request: Request) {
       andConditions.push({ OR: searchOR });
     }
 
-    // شرط التصنيف
     let categoryName = category;
     if (category && !isNaN(parseInt(category))) {
       const cat = await prisma.categories.findUnique({
@@ -52,7 +47,6 @@ export async function GET(request: Request) {
         OR: [
           { group_name: { contains: categoryName, mode: "insensitive" } },
           { kind_name: { contains: categoryName, mode: "insensitive" } },
-          { item_name: { contains: categoryName, mode: "insensitive" } },
         ],
       });
     }
@@ -60,136 +54,133 @@ export async function GET(request: Request) {
     const whereConditions =
       andConditions.length > 0 ? { AND: andConditions } : {};
 
-    // 📥 1. وضع التصدير (Export Excel): إرجاع البيانات "خام"
     if (isExport) {
       const rawProducts = await prisma.products.findMany({
         where: whereConditions,
         orderBy: { unique_id: "desc" },
       });
-
-      // تنسيق البيانات لتطابق ملف التيمبليت تماماً
-      const exportData = rawProducts.map((p) => ({
-        item_name: p.item_name || "",
-        master_code: p.master_code || "",
-        item_code: p.item_code || "",
-        out_price: p.out_price || 0,
-        cur_qty: p.cur_qty || 0,
-        color: p.color || "",
-        size: p.size || "",
-        group_name: p.group_name || "",
-        kind_name: p.kind_name || "",
-        images: p.images || "",
-      }));
-
-      return NextResponse.json({ success: true, data: exportData });
+      return NextResponse.json({ success: true, data: rawProducts });
     }
 
-    // 🖥️ 2. وضع العرض العادي (Dashboard)
     const allProductsRaw = await prisma.products.findMany({
       where: whereConditions,
       orderBy: { unique_id: "desc" },
     });
 
+    // تجميع المنتجات (Logic التجميع)
     const groupedByMasterCode: { [key: string]: any } = {};
-
     allProductsRaw.forEach((row) => {
       const masterCode = row.master_code;
       if (!masterCode) return;
-
-      const color = row.color || "Default";
-      const quantity = parseInt(row.cur_qty?.toString() || "0", 10);
 
       if (!groupedByMasterCode[masterCode]) {
         groupedByMasterCode[masterCode] = {
           modelId: masterCode,
           master_code: masterCode,
           item_code: row.item_code,
-          description: row.item_name || row.kind_name || "منتج بدون اسم", // ✅ الإصلاح هنا
+          description: row.item_name || "منتج",
           item_name: row.item_name,
           price: row.out_price || 0,
           cur_qty: 0,
-          group_name: row.group_name,
-          kind_name: row.kind_name,
-          category: row.group_name || row.kind_name || "",
+          category: row.group_name || "",
           variants: [],
         };
       }
 
-      groupedByMasterCode[masterCode].cur_qty += quantity; // ✅ جمع رقمي صحيح
+      const quantity = parseInt(row.cur_qty?.toString() || "0", 10);
+      groupedByMasterCode[masterCode].cur_qty += quantity;
 
-      const existingVariantIndex = groupedByMasterCode[
-        masterCode
-      ].variants.findIndex((v: any) => v.color === color);
+      const color = row.color || "Default";
+      let variant = groupedByMasterCode[masterCode].variants.find(
+        (v: any) => v.color === color
+      );
 
-      const imgUrl = row.images || "/placeholder.jpg";
-
-      if (existingVariantIndex > -1) {
-        groupedByMasterCode[masterCode].variants[
-          existingVariantIndex
-        ].sizes.push(row.size || "Free");
-        groupedByMasterCode[masterCode].variants[
-          existingVariantIndex
-        ].quantities.push(quantity);
-      } else {
+      if (!variant) {
         groupedByMasterCode[masterCode].variants.push({
           color: color,
-          imageUrl: imgUrl,
+          imageUrl: row.images || "/placeholder.jpg",
           sizes: [row.size || "Free"],
           quantities: [quantity],
         });
+      } else {
+        variant.sizes.push(row.size || "Free");
+        variant.quantities.push(quantity);
       }
     });
 
     const allGroupedProducts = Object.values(groupedByMasterCode);
     const totalProducts = allGroupedProducts.length;
-    const totalPages = Math.ceil(totalProducts / limit);
     const skip = (page - 1) * limit;
     const paginatedProducts = allGroupedProducts.slice(skip, skip + limit);
 
     return NextResponse.json({
       success: true,
       products: paginatedProducts,
-      pagination: { page, limit, totalProducts, totalPages },
+      pagination: {
+        page,
+        limit,
+        totalProducts,
+        totalPages: Math.ceil(totalProducts / limit),
+      },
     });
   } catch (error: any) {
-    console.error("❌ Error in products API:", error);
     return NextResponse.json(
-      { success: false, products: [], error: error.message },
+      { success: false, error: error.message },
       { status: 500 }
     );
   }
 }
 
-// 🚀🚀 دالة POST: الرفع السريع (Bulk Insert)
+// 2️⃣ دالة POST (الرفع والإضافة)
 export async function POST(request: Request) {
   try {
     const body = await request.json();
 
-    // 1. إذا كانت البيانات مصفوفة (رفع ملف اكسيل)
+    // A. الرفع الجماعي (Array)
     if (Array.isArray(body)) {
-      console.log(`🚀 Starting bulk upload for ${body.length} items...`);
+      console.log(`🚀 Bulk uploading ${body.length} items...`);
 
-      // تنظيف وتحويل البيانات
-      const cleanData = body.map((item) => ({
-        item_name: item.item_name?.toString() || "",
-        master_code: item.master_code?.toString() || "",
-        item_code: item.item_code?.toString() || "",
-        out_price: parseFloat(item.out_price) || 0,
-        cur_qty: parseInt(item.cur_qty) || 0,
-        color: item.color?.toString() || "",
-        size: item.size?.toString() || "",
-        group_name: item.group_name?.toString() || "",
-        kind_name: item.kind_name?.toString() || "",
-        images: item.images?.toString() || "",
-        stor_id: 0,
-      }));
+      const cleanData = body.map((item, index) => {
+        const timestamp = Date.now().toString(36);
+        const random = Math.random().toString(36).substring(2, 8);
 
-      // استخدام createMany للإضافة السريعة جداً
-      // ملاحظة: createMany مدعومة في PostgreSQL, MySQL, SQL Server (النسخ الحديثة), MongoDB
-      // إذا كنت تستخدم SQLite، يجب استخدام حلقة تكرار مع transaction
+        return {
+          unique_id: `PRD-${timestamp}-${random}-${index}`.toUpperCase(),
+          item_name: item.item_name?.toString() || "بدون اسم",
+          master_code: item.master_code?.toString() || "",
+          item_code:
+            item.item_code?.toString() || `${item.master_code}-${index}`,
+          out_price: parseFloat(item.out_price) || 0,
+          cur_qty: parseInt(item.cur_qty) || 0,
+          color: item.color?.toString() || "Default",
+          size: item.size?.toString() || "Free",
+          group_name: item.group_name?.toString() || "عام",
+          kind_name: item.kind_name?.toString() || "عام",
+          images: item.images?.toString() || "",
+          stor_id: 0,
+          // Defaults
+          type_id: 0,
+          item_id: 0,
+          unit_id: 0,
+          unit_convert: 1,
+          multi_unit: false,
+          multi_type: false,
+          unit_def1_id: 0,
+          group_id: 0,
+          class_id: 0,
+          is_basic_unit: true,
+          kind_id: 0,
+          place_id: 0,
+          unit_name_id: 0,
+          unit_name: "قطعة",
+          class_name: item.group_name?.toString() || "عام",
+          place_name: "المخزن الرئيسي",
+        };
+      });
+
       const result = await prisma.products.createMany({
         data: cleanData,
-        skipDuplicates: true, // تخطي المكرر بدلاً من الخطأ
+        skipDuplicates: true,
       });
 
       return NextResponse.json({
@@ -198,20 +189,38 @@ export async function POST(request: Request) {
       });
     }
 
-    // 2. إذا كان منتج واحد (من الفورم العادي)
+    // B. منتج فردي
     else {
+      const timestamp = Date.now().toString(36);
+      const random = Math.random().toString(36).substring(2, 9);
+
       const newProduct = await prisma.products.create({
         data: {
+          unique_id: `PRD-${timestamp}-${random}`.toUpperCase(),
           ...body,
           out_price: parseFloat(body.out_price),
           cur_qty: parseInt(body.cur_qty),
           stor_id: 0,
+          // Defaults
+          type_id: 0,
+          item_id: 0,
+          unit_id: 0,
+          unit_convert: 1,
+          group_id: 0,
+          kind_id: 0,
+          class_id: 0,
+          place_id: 0,
+          unit_name_id: 0,
+          unit_def1_id: 0,
+          multi_unit: false,
+          multi_type: false,
+          is_basic_unit: true,
         },
       });
       return NextResponse.json({ success: true, product: newProduct });
     }
   } catch (error: any) {
-    console.error("❌ Error in POST products:", error);
+    console.error("❌ Error:", error);
     return NextResponse.json(
       { success: false, error: error.message },
       { status: 500 }

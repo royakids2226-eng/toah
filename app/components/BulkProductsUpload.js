@@ -2,7 +2,13 @@
 
 import { useState, useRef, useEffect } from "react";
 import * as XLSX from "xlsx";
-import { processExcelFile, validateExcelData, createDataAnalysisReport, getExcelTemplate, generateDataReport } from "@/app/utils/excelSplitter";
+import {
+  processExcelFile,
+  validateExcelData,
+  createDataAnalysisReport,
+  getExcelTemplate,
+  generateDataReport,
+} from "@/app/utils/excelSplitter";
 import { BatchUploader } from "@/app/utils/batchUploader";
 
 export default function BulkProductsUpload({ onClose, onSuccess }) {
@@ -14,7 +20,7 @@ export default function BulkProductsUpload({ onClose, onSuccess }) {
   const [warnings, setWarnings] = useState([]);
   const [dataReport, setDataReport] = useState(null);
   const fileInputRef = useRef(null);
-  
+
   const batchUploaderRef = useRef(null);
 
   const requiredColumns = [
@@ -22,35 +28,35 @@ export default function BulkProductsUpload({ onClose, onSuccess }) {
     "item_code", // ✅ أصبح إجباري الآن
     "item_name",
     "out_price",
-    "cur_qty"
+    "cur_qty",
   ];
 
   // ✅ تحميل الحالة المحفوظة عند فتح المكون
   useEffect(() => {
-    const savedState = localStorage.getItem('bulk_upload_state');
+    const savedState = localStorage.getItem("bulk_upload_state");
     if (savedState) {
       const state = JSON.parse(savedState);
-      if (state.status === 'uploading' || state.status === 'paused') {
-        if (confirm('يوجد رفع متوقف. هل تريد استئناف الرفع؟')) {
+      if (state.status === "uploading" || state.status === "paused") {
+        if (confirm("يوجد رفع متوقف. هل تريد استئناف الرفع؟")) {
           setUploadStatus(state);
           setPreviewData(state.data || []);
           setUploading(true);
-          setPaused(state.status === 'paused');
-          
+          setPaused(state.status === "paused");
+
           // استعادة الـ BatchUploader
           batchUploaderRef.current = new BatchUploader({
             batchSize: state.batchSize || 200,
             onProgress: handleUploadProgress,
             onComplete: handleUploadComplete,
             onError: handleUploadError,
-            maxRetries: 3
+            maxRetries: 3,
           });
-          
+
           // استعادة حالة الرفع
           batchUploaderRef.current.restoreState(state);
         } else {
           // مسح الحالة المحفوظة
-          localStorage.removeItem('bulk_upload_state');
+          localStorage.removeItem("bulk_upload_state");
         }
       }
     }
@@ -59,9 +65,9 @@ export default function BulkProductsUpload({ onClose, onSuccess }) {
       // تنظيف عند إغلاق المكون
       if (batchUploaderRef.current && !batchUploaderRef.current.isComplete) {
         const state = batchUploaderRef.current.getState();
-        if (state.status === 'uploading') {
-          state.status = 'paused';
-          localStorage.setItem('bulk_upload_state', JSON.stringify(state));
+        if (state.status === "uploading") {
+          state.status = "paused";
+          localStorage.setItem("bulk_upload_state", JSON.stringify(state));
         }
       }
     };
@@ -73,7 +79,9 @@ export default function BulkProductsUpload({ onClose, onSuccess }) {
 
     // ✅ التحقق من حجم الملف (حد أقصى 20MB)
     if (file.size > 20 * 1024 * 1024) {
-      setErrors(["حجم الملف كبير جداً (الحد الأقصى 20MB). قم بتقسيم الملف إلى أجزاء أصغر."]);
+      setErrors([
+        "حجم الملف كبير جداً (الحد الأقصى 20MB). قم بتقسيم الملف إلى أجزاء أصغر.",
+      ]);
       return;
     }
 
@@ -84,11 +92,20 @@ export default function BulkProductsUpload({ onClose, onSuccess }) {
     setDataReport(null);
 
     try {
-      console.log("📁 بدء معالجة ملف:", file.name, "بحجم:", (file.size / 1024 / 1024).toFixed(2), "MB");
+      console.log(
+        "📁 بدء معالجة ملف:",
+        file.name,
+        "بحجم:",
+        (file.size / 1024 / 1024).toFixed(2),
+        "MB"
+      );
 
       // ✅ قراءة وتحليل ملف Excel
-      const { data, errors: fileErrors, warnings: fileWarnings } = 
-        await processExcelFile(file, requiredColumns);
+      const {
+        data,
+        errors: fileErrors,
+        warnings: fileWarnings,
+      } = await processExcelFile(file, requiredColumns);
 
       if (fileErrors.length > 0) {
         setErrors(fileErrors);
@@ -109,24 +126,27 @@ export default function BulkProductsUpload({ onClose, onSuccess }) {
       // ✅ تحليل البيانات وإنشاء تقرير
       const report = createDataAnalysisReport(data);
       setDataReport(report);
-      
+
       // ✅ إضافة تحذيرات من التقرير
       if (report.issues && report.issues.length > 0) {
-        setWarnings(prev => [...prev, ...report.issues]);
+        setWarnings((prev) => [...prev, ...report.issues]);
       }
-      
+
       // ✅ تحذير إذا كان هناك تكرارات في item_code
       if (report.variants?.duplicateItemCodes > 0) {
-        setWarnings(prev => [...prev, 
-          `⚠️ يوجد ${report.variants.duplicateItemCodes} item_code مكرر. قد لا يتم رفع جميع الأصناف!`
+        setWarnings((prev) => [
+          ...prev,
+          `⚠️ يوجد ${report.variants.duplicateItemCodes} item_code مكرر. قد لا يتم رفع جميع الأصناف!`,
         ]);
       }
-      
+
       // ✅ تحذير إذا كان هناك master codes بدون تنوع
-      const mastersWithoutVariants = report.masterCodes.unique - report.masterCodes.withVariants;
+      const mastersWithoutVariants =
+        report.masterCodes.unique - report.masterCodes.withVariants;
       if (mastersWithoutVariants > 0) {
-        setWarnings(prev => [...prev, 
-          `ℹ️ ${mastersWithoutVariants} منتج بدون ألوان/مقاسات متعددة`
+        setWarnings((prev) => [
+          ...prev,
+          `ℹ️ ${mastersWithoutVariants} منتج بدون ألوان/مقاسات متعددة`,
         ]);
       }
 
@@ -135,20 +155,21 @@ export default function BulkProductsUpload({ onClose, onSuccess }) {
 
       // ✅ تحذير إذا كان عدد المنتجات كبيراً
       if (data.length > 10000) {
-        setWarnings(prev => [
+        setWarnings((prev) => [
           ...prev,
-          `📊 عدد المنتجات كبير (${data.length})، سيتم تقسيمها إلى دفعات. قد يستغرق الرفع وقتاً أطول.`
+          `📊 عدد المنتجات كبير (${data.length})، سيتم تقسيمها إلى دفعات. قد يستغرق الرفع وقتاً أطول.`,
         ]);
       }
 
       console.log(`✅ تم تحميل ${data.length} منتج بنجاح`);
       console.log("📊 تقرير البيانات:", report);
-      
+
       // ✅ عرض ملخص سريع
       if (report.masterCodes.withVariants > 0) {
-        console.log(`🎨 ${report.masterCodes.withVariants} منتج بها ألوان/مقاسات متعددة`);
+        console.log(
+          `🎨 ${report.masterCodes.withVariants} منتج بها ألوان/مقاسات متعددة`
+        );
       }
-      
     } catch (error) {
       console.error("❌ خطأ في قراءة الملف:", error);
       setErrors([`خطأ في قراءة ملف Excel: ${error.message}`]);
@@ -165,25 +186,25 @@ export default function BulkProductsUpload({ onClose, onSuccess }) {
     if (dataReport?.variants?.duplicateItemCodes > 0) {
       const confirmUpload = confirm(
         `⚠️ يوجد ${dataReport.variants.duplicateItemCodes} item_code مكرر.\n` +
-        `قد لا يتم رفع جميع الأصناف (الألوان/المقاسات).\n\n` +
-        `هل تريد المتابعة مع العلم بأن بعض الأصناف قد لا ترفع؟`
+          `قد لا يتم رفع جميع الأصناف (الألوان/المقاسات).\n\n` +
+          `هل تريد المتابعة مع العلم بأن بعض الأصناف قد لا ترفع؟`
       );
-      
+
       if (!confirmUpload) return;
     }
 
     // ✅ تحذير حول item_code إذا لزم
-    const hasItemCodeIssues = previewData.some(item => 
-      !item.item_code || item.item_code === item.master_code
+    const hasItemCodeIssues = previewData.some(
+      (item) => !item.item_code || item.item_code === item.master_code
     );
-    
+
     if (hasItemCodeIssues) {
       const confirmIssue = confirm(
         "⚠️ بعض المنتجات قد تحتوي على مشاكل في item_code.\n" +
-        "سيحاول النظام إصلاحها تلقائياً.\n\n" +
-        "هل تريد المتابعة؟"
+          "سيحاول النظام إصلاحها تلقائياً.\n\n" +
+          "هل تريد المتابعة؟"
       );
-      
+
       if (!confirmIssue) return;
     }
 
@@ -194,7 +215,7 @@ export default function BulkProductsUpload({ onClose, onSuccess }) {
       onComplete: handleUploadComplete,
       onError: handleUploadError,
       maxRetries: 3,
-      data: previewData
+      data: previewData,
     });
 
     setUploading(true);
@@ -235,8 +256,8 @@ export default function BulkProductsUpload({ onClose, onSuccess }) {
     setUploading(false);
     setPaused(false);
     setUploadStatus(null);
-    localStorage.removeItem('bulk_upload_state');
-    
+    localStorage.removeItem("bulk_upload_state");
+
     if (batchUploaderRef.current) {
       batchUploaderRef.current.cleanup();
       batchUploaderRef.current = null;
@@ -245,22 +266,25 @@ export default function BulkProductsUpload({ onClose, onSuccess }) {
 
   const handleUploadProgress = (status) => {
     setUploadStatus(status);
-    
+
     // ✅ حفظ الحالة في localStorage للاستئناف
-    if (status.status === 'uploading' || status.status === 'paused') {
-      localStorage.setItem('bulk_upload_state', JSON.stringify({
-        ...status,
-        data: previewData
-      }));
+    if (status.status === "uploading" || status.status === "paused") {
+      localStorage.setItem(
+        "bulk_upload_state",
+        JSON.stringify({
+          ...status,
+          data: previewData,
+        })
+      );
     }
   };
 
   const handleUploadComplete = (result) => {
     console.log("✅ الرفع اكتمل:", result);
-    
+
     // ✅ مسح الحالة المحفوظة
-    localStorage.removeItem('bulk_upload_state');
-    
+    localStorage.removeItem("bulk_upload_state");
+
     // ✅ عرض النتائج مع تفاصيل أكثر
     const summary = result.summary;
     let message = `✅ تم الانتهاء من رفع المنتجات\n\n`;
@@ -271,28 +295,28 @@ export default function BulkProductsUpload({ onClose, onSuccess }) {
     message += `❌ الفاشلة: ${summary.failed} منتج\n`;
     message += `⏱️ الوقت: ${summary.totalTime}\n`;
     message += `📦 الدفعات: ${summary.totalBatches} دفعة\n\n`;
-    
+
     if (summary.errors?.length > 0) {
       message += `🔍 الأخطاء: ${summary.errors.length} خطأ\n`;
       message += `(يمكنك تنزيل تقرير الأخطاء)`;
     }
-    
+
     // ✅ إضافة ملاحظات خاصة بـ item_code
     if (dataReport?.variants?.duplicateItemCodes > 0) {
       message += `\n\n⚠️ ملاحظة: كان هناك ${dataReport.variants.duplicateItemCodes} item_code مكرر`;
       message += `\nقد يكون بعض الأصناف لم يرفع بسبب التكرار`;
     }
-    
+
     if (summary.skipped > summary.successfullyUploaded) {
       message += `\n\n💡 معظم المنتجات موجودة مسبقاً (${summary.skipped} منتج)`;
       message += `\nتم تحديث البيانات الحالية`;
     }
-    
+
     alert(message);
-    
+
     // ✅ إعادة تعيين الحالة
     resetUploadState();
-    
+
     // ✅ إغلاق النافذة وإعادة تحميل البيانات
     onSuccess();
     onClose();
@@ -300,11 +324,14 @@ export default function BulkProductsUpload({ onClose, onSuccess }) {
 
   const handleUploadError = (error) => {
     console.error("❌ خطأ في الرفع:", error);
-    
+
     let errorMessage = "❌ فشل في رفع المنتجات\n";
     errorMessage += `السبب: ${error.message || "خطأ غير معروف"}\n\n`;
-    
-    if (error.message?.includes("network") || error.message?.includes("اتصال")) {
+
+    if (
+      error.message?.includes("network") ||
+      error.message?.includes("اتصال")
+    ) {
       errorMessage += "🌐 توصيحة: تحقق من اتصال الإنترنت وحاول مرة أخرى\n";
       errorMessage += "يمكنك استئناف الرفع من حيث توقف";
     } else if (error.message?.includes("timeout")) {
@@ -315,14 +342,14 @@ export default function BulkProductsUpload({ onClose, onSuccess }) {
       errorMessage += "2. أن item_code فريد لكل لون/مقاس\n";
       errorMessage += "3. أن item_code لا يساوي master_code";
     }
-    
+
     alert(errorMessage);
-    
+
     // ✅ حفظ الحالة للاستئناف
     if (batchUploaderRef.current) {
       const state = batchUploaderRef.current.getState();
-      state.status = 'paused';
-      localStorage.setItem('bulk_upload_state', JSON.stringify(state));
+      state.status = "paused";
+      localStorage.setItem("bulk_upload_state", JSON.stringify(state));
       setPaused(true);
     }
   };
@@ -330,17 +357,21 @@ export default function BulkProductsUpload({ onClose, onSuccess }) {
   const downloadTemplate = () => {
     try {
       const templateData = getExcelTemplate();
-      const blob = new Blob([templateData], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const blob = new Blob([templateData], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
       const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
+      const a = document.createElement("a");
       a.href = url;
-      a.download = 'نموذج_المنتجات_المحسن.xlsx';
+      a.download = "نموذج_المنتجات_المحسن.xlsx";
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
-      
-      alert("✅ تم تحميل النموذج المحسن\n\nملاحظة: item_code أصبح عموداً مطلوباً الآن للتمييز بين الألوان والمقاسات");
+
+      alert(
+        "✅ تم تحميل النموذج المحسن\n\nملاحظة: item_code أصبح عموداً مطلوباً الآن للتمييز بين الألوان والمقاسات"
+      );
     } catch (error) {
       console.error("❌ خطأ في تحميل النموذج:", error);
       alert("❌ فشل في تحميل النموذج");
@@ -348,10 +379,13 @@ export default function BulkProductsUpload({ onClose, onSuccess }) {
   };
 
   const downloadErrorsReport = () => {
-    if (!uploadStatus?.summary?.errors || uploadStatus.summary.errors.length === 0) {
+    if (
+      !uploadStatus?.summary?.errors ||
+      uploadStatus.summary.errors.length === 0
+    ) {
       return;
     }
-    
+
     const errorData = uploadStatus.summary.errors.map((error, index) => ({
       رقم: index + 1,
       الدفعة: error.batch || "غير محدد",
@@ -359,7 +393,7 @@ export default function BulkProductsUpload({ onClose, onSuccess }) {
       الخطأ: error.message,
       الوقت: error.timestamp || new Date().toLocaleString(),
     }));
-    
+
     const worksheet = XLSX.utils.json_to_sheet(errorData);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "الأخطاء");
@@ -368,41 +402,60 @@ export default function BulkProductsUpload({ onClose, onSuccess }) {
 
   const downloadDataAnalysisReport = () => {
     if (!dataReport) return;
-    
+
     const reportData = [
       ["📊 تقرير تحليل البيانات"],
       ["", ""],
       ["إجمالي المنتجات:", dataReport.total],
       ["عدد master codes فريدة:", dataReport.masterCodes?.unique || 0],
-      ["منتجات بها ألوان/مقاسات متعددة:", dataReport.masterCodes?.withVariants || 0],
+      [
+        "منتجات بها ألوان/مقاسات متعددة:",
+        dataReport.masterCodes?.withVariants || 0,
+      ],
       ["عدد item codes فريدة:", dataReport.variants?.totalItemCodes || 0],
       ["", ""],
       ["🎨 الألوان المتوفرة:"],
-      ...(dataReport.attributes?.colors || []).map(color => ["", `- ${color}`]),
+      ...(dataReport.attributes?.colors || []).map((color) => [
+        "",
+        `- ${color}`,
+      ]),
       ["", ""],
       ["📏 المقاسات المتوفرة:"],
-      ...(dataReport.attributes?.sizes || []).map(size => ["", `- ${size}`]),
+      ...(dataReport.attributes?.sizes || []).map((size) => ["", `- ${size}`]),
       ["", ""],
       ["⚠️ المشاكل المكتشفة:"],
-      ...(dataReport.issues || []).map(issue => ["", issue]),
+      ...(dataReport.issues || []).map((issue) => ["", issue]),
       ["", ""],
       ["📋 عينة من البيانات (أول 10 صفوف):"],
-      ["master_code", "item_code", "item_name", "color", "size", "out_price", "cur_qty"],
-      ...previewData.slice(0, 10).map(item => [
-        item.master_code,
-        item.item_code,
-        item.item_name,
-        item.color,
-        item.size,
-        item.out_price,
-        item.cur_qty
-      ])
+      [
+        "master_code",
+        "item_code",
+        "item_name",
+        "color",
+        "size",
+        "out_price",
+        "cur_qty",
+      ],
+      ...previewData
+        .slice(0, 10)
+        .map((item) => [
+          item.master_code,
+          item.item_code,
+          item.item_name,
+          item.color,
+          item.size,
+          item.out_price,
+          item.cur_qty,
+        ]),
     ];
-    
+
     const worksheet = XLSX.utils.aoa_to_sheet(reportData);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "تقرير التحليل");
-    XLSX.writeFile(workbook, `تقرير_تحليل_البيانات_${new Date().getTime()}.xlsx`);
+    XLSX.writeFile(
+      workbook,
+      `تقرير_تحليل_البيانات_${new Date().getTime()}.xlsx`
+    );
   };
 
   const clearFile = () => {
@@ -411,17 +464,17 @@ export default function BulkProductsUpload({ onClose, onSuccess }) {
     setWarnings([]);
     setDataReport(null);
     if (fileInputRef.current) {
-      fileInputRef.current.value = '';
+      fileInputRef.current.value = "";
     }
   };
 
   // ✅ حساب التقدم
   const calculateProgress = () => {
     if (!uploadStatus) return 0;
-    
+
     const total = uploadStatus.totalProducts || 0;
     const processed = uploadStatus.processedProducts || 0;
-    
+
     if (total === 0) return 0;
     return Math.round((processed / total) * 100);
   };
@@ -429,16 +482,16 @@ export default function BulkProductsUpload({ onClose, onSuccess }) {
   // ✅ تحليل سريع للبيانات
   const getQuickAnalysis = () => {
     if (!previewData.length || !dataReport) return null;
-    
+
     const analysis = {
       total: previewData.length,
-      uniqueMasters: new Set(previewData.map(p => p.master_code)).size,
-      uniqueItems: new Set(previewData.map(p => p.item_code)).size,
+      uniqueMasters: new Set(previewData.map((p) => p.master_code)).size,
+      uniqueItems: new Set(previewData.map((p) => p.item_code)).size,
       hasVariants: dataReport.masterCodes?.withVariants > 0,
       variantCount: dataReport.masterCodes?.withVariants || 0,
       duplicateItems: dataReport.variants?.duplicateItemCodes || 0,
     };
-    
+
     return analysis;
   };
 
@@ -471,7 +524,8 @@ export default function BulkProductsUpload({ onClose, onSuccess }) {
                 <div className="flex gap-2">
                   {uploadStatus?.currentBatch && (
                     <span className="bg-blue-100 text-blue-800 text-xs px-3 py-1 rounded-full">
-                      الدفعة {uploadStatus.currentBatch}/{uploadStatus.totalBatches}
+                      الدفعة {uploadStatus.currentBatch}/
+                      {uploadStatus.totalBatches}
                     </span>
                   )}
                   <span className="bg-green-100 text-green-800 text-xs px-3 py-1 rounded-full">
@@ -484,7 +538,10 @@ export default function BulkProductsUpload({ onClose, onSuccess }) {
               <div className="mb-4">
                 <div className="flex justify-between text-sm text-blue-800 mb-1">
                   <span>التقدم العام</span>
-                  <span>{uploadStatus?.processedProducts || 0} / {uploadStatus?.totalProducts || 0}</span>
+                  <span>
+                    {uploadStatus?.processedProducts || 0} /{" "}
+                    {uploadStatus?.totalProducts || 0}
+                  </span>
                 </div>
                 <div className="w-full bg-blue-100 rounded-full h-3">
                   <div
@@ -500,19 +557,19 @@ export default function BulkProductsUpload({ onClose, onSuccess }) {
                   <div className="flex justify-between">
                     <span>الحالة:</span>
                     <span className="font-medium">
-                      {uploadStatus.status === 'uploading' && 'جاري الرفع'}
-                      {uploadStatus.status === 'paused' && 'متوقف'}
-                      {uploadStatus.status === 'processing' && 'جارٍ المعالجة'}
+                      {uploadStatus.status === "uploading" && "جاري الرفع"}
+                      {uploadStatus.status === "paused" && "متوقف"}
+                      {uploadStatus.status === "processing" && "جارٍ المعالجة"}
                     </span>
                   </div>
-                  
+
                   <div className="flex justify-between">
                     <span>المنتجات المضافة:</span>
                     <span className="font-medium text-green-600">
                       {uploadStatus.summary?.successfullyUploaded || 0}
                     </span>
                   </div>
-                  
+
                   {uploadStatus.summary?.updated > 0 && (
                     <div className="flex justify-between">
                       <span>المنتجات المحدثة:</span>
@@ -521,18 +578,18 @@ export default function BulkProductsUpload({ onClose, onSuccess }) {
                       </span>
                     </div>
                   )}
-                  
+
                   <div className="flex justify-between">
                     <span>المنتجات المتخطاة:</span>
                     <span className="font-medium text-yellow-600">
                       {uploadStatus.summary?.skipped || 0}
                     </span>
                   </div>
-                  
+
                   <div className="flex justify-between">
                     <span>الوقت المنقضي:</span>
                     <span className="font-medium">
-                      {uploadStatus.elapsedTime || '00:00'}
+                      {uploadStatus.elapsedTime || "00:00"}
                     </span>
                   </div>
                 </div>
@@ -543,21 +600,21 @@ export default function BulkProductsUpload({ onClose, onSuccess }) {
                 <button
                   onClick={handlePauseResume}
                   className={`px-4 py-2 rounded-lg transition-colors ${
-                    paused 
-                      ? 'bg-green-600 text-white hover:bg-green-700' 
-                      : 'bg-yellow-500 text-white hover:bg-yellow-600'
+                    paused
+                      ? "bg-green-600 text-white hover:bg-green-700"
+                      : "bg-yellow-500 text-white hover:bg-yellow-600"
                   }`}
                 >
-                  {paused ? '▶️ استئناف' : '⏸️ إيقاف مؤقت'}
+                  {paused ? "▶️ استئناف" : "⏸️ إيقاف مؤقت"}
                 </button>
-                
+
                 <button
                   onClick={handleCancel}
                   className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
                 >
                   ❌ إلغاء الرفع
                 </button>
-                
+
                 {uploadStatus?.summary?.errors?.length > 0 && (
                   <button
                     onClick={downloadErrorsReport}
@@ -596,36 +653,65 @@ export default function BulkProductsUpload({ onClose, onSuccess }) {
               </div>
 
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                <h4 className="font-medium text-blue-900 mb-2">معلومات مهمة (إصدار محسن):</h4>
+                <h4 className="font-medium text-blue-900 mb-2">
+                  معلومات مهمة (إصدار محسن):
+                </h4>
                 <ul className="text-blue-800 text-sm space-y-1">
-                  <li>• <strong>master_code</strong>: الكود الرئيسي للمنتج (مثل: 3700)</li>
-                  <li>• <strong>item_code</strong>: <span className="font-bold text-red-600">مطلوب الآن</span> للتمييز بين الألوان والمقاسات (مثل: 3700.1, 3700.2)</li>
-                  <li>• <strong>item_code يجب أن يكون فريداً</strong> لكل لون/مقاس</li>
-                  <li>• <strong>بدون item_code فريد</strong>: سيتم رفع صنف واحد فقط!</li>
-                  <li>• <strong>يدعم ملفات كبيرة</strong>: سيتم تقسيمها تلقائياً إلى دفعات</li>
-                  <li>• <strong>يمكن إيقاف واستئناف</strong>: حفظ التقدم تلقائياً</li>
+                  <li>
+                    • <strong>master_code</strong>: الكود الرئيسي للمنتج (مثل:
+                    3700)
+                  </li>
+                  <li>
+                    • <strong>item_code</strong>:{" "}
+                    <span className="font-bold text-red-600">مطلوب الآن</span>{" "}
+                    للتمييز بين الألوان والمقاسات (مثل: 3700.1, 3700.2)
+                  </li>
+                  <li>
+                    • <strong>item_code يجب أن يكون فريداً</strong> لكل لون/مقاس
+                  </li>
+                  <li>
+                    • <strong>بدون item_code فريد</strong>: سيتم رفع صنف واحد
+                    فقط!
+                  </li>
+                  <li>
+                    • <strong>يدعم ملفات كبيرة</strong>: سيتم تقسيمها تلقائياً
+                    إلى دفعات
+                  </li>
+                  <li>
+                    • <strong>يمكن إيقاف واستئناف</strong>: حفظ التقدم تلقائياً
+                  </li>
                 </ul>
               </div>
 
               {/* ✅ تحليل سريع للبيانات */}
               {quickAnalysis && (
                 <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
-                  <h4 className="font-medium text-green-900 mb-2">📊 تحليل سريع للبيانات:</h4>
+                  <h4 className="font-medium text-green-900 mb-2">
+                    📊 تحليل سريع للبيانات:
+                  </h4>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                     <div className="text-center">
-                      <div className="text-2xl font-bold text-gray-900">{quickAnalysis.total}</div>
+                      <div className="text-2xl font-bold text-gray-900">
+                        {quickAnalysis.total}
+                      </div>
                       <div className="text-gray-600">إجمالي المنتجات</div>
                     </div>
                     <div className="text-center">
-                      <div className="text-2xl font-bold text-blue-900">{quickAnalysis.uniqueMasters}</div>
+                      <div className="text-2xl font-bold text-blue-900">
+                        {quickAnalysis.uniqueMasters}
+                      </div>
                       <div className="text-gray-600">master code فريدة</div>
                     </div>
                     <div className="text-center">
-                      <div className="text-2xl font-bold text-purple-900">{quickAnalysis.uniqueItems}</div>
+                      <div className="text-2xl font-bold text-purple-900">
+                        {quickAnalysis.uniqueItems}
+                      </div>
                       <div className="text-gray-600">item code فريدة</div>
                     </div>
                     <div className="text-center">
-                      <div className="text-2xl font-bold text-green-900">{quickAnalysis.variantCount}</div>
+                      <div className="text-2xl font-bold text-green-900">
+                        {quickAnalysis.variantCount}
+                      </div>
                       <div className="text-gray-600">منتج متعدد الأصناف</div>
                     </div>
                   </div>
@@ -653,17 +739,19 @@ export default function BulkProductsUpload({ onClose, onSuccess }) {
                     <span className="text-2xl">📊</span>
                   </div>
                   <h3 className="text-lg font-medium text-gray-900 mb-2">
-                    {previewData.length > 0 ? "ملف جاهز للرفع" : "اختر ملف Excel"}
+                    {previewData.length > 0
+                      ? "ملف جاهز للرفع"
+                      : "اختر ملف Excel"}
                   </h3>
                   <p className="text-gray-600">
-                    {previewData.length > 0 
+                    {previewData.length > 0
                       ? `✅ تم تحميل ${previewData.length} منتج`
-                      : "سيتم تقسيم الملف إلى دفعات تلقائياً"
-                    }
+                      : "سيتم تقسيم الملف إلى دفعات تلقائياً"}
                   </p>
                   {previewData.length > 0 && quickAnalysis && (
                     <p className="text-sm text-green-600 mt-1">
-                      🎯 {quickAnalysis.uniqueMasters} منتج رئيسي مع {quickAnalysis.uniqueItems} صنف مختلف
+                      🎯 {quickAnalysis.uniqueMasters} منتج رئيسي مع{" "}
+                      {quickAnalysis.uniqueItems} صنف مختلف
                     </p>
                   )}
                 </div>
@@ -675,7 +763,7 @@ export default function BulkProductsUpload({ onClose, onSuccess }) {
                   >
                     {previewData.length > 0 ? "تغيير الملف" : "اختر ملف Excel"}
                   </button>
-                  
+
                   {previewData.length > 0 && (
                     <button
                       onClick={clearFile}
@@ -759,7 +847,9 @@ export default function BulkProductsUpload({ onClose, onSuccess }) {
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50">
                     <tr>
-                      <th className="px-3 py-2 text-right border">master_code</th>
+                      <th className="px-3 py-2 text-right border">
+                        master_code
+                      </th>
                       <th className="px-3 py-2 text-right border">item_code</th>
                       <th className="px-3 py-2 text-right border">الاسم</th>
                       <th className="px-3 py-2 text-right border">اللون</th>
@@ -777,11 +867,14 @@ export default function BulkProductsUpload({ onClose, onSuccess }) {
                         <td className="px-3 py-2 border text-xs font-mono font-bold">
                           {product.master_code}
                         </td>
-                        <td className={`px-3 py-2 border text-xs font-mono ${
-                          !product.item_code || product.item_code === product.master_code 
-                            ? 'text-red-600 font-bold' 
-                            : 'text-blue-600'
-                        }`}>
+                        <td
+                          className={`px-3 py-2 border text-xs font-mono ${
+                            !product.item_code ||
+                            product.item_code === product.master_code
+                              ? "text-red-600 font-bold"
+                              : "text-blue-600"
+                          }`}
+                        >
                           {product.item_code || "❌ مفقود"}
                         </td>
                         <td className="px-3 py-2 border text-xs text-right">
@@ -831,10 +924,11 @@ export default function BulkProductsUpload({ onClose, onSuccess }) {
                 >
                   <span>📤</span>
                   <span>
-                    {previewData.length > 1000 
-                      ? `رفع ${previewData.length} منتج (${quickAnalysis?.uniqueMasters || 0} منتج رئيسي)` 
-                      : `رفع ${previewData.length} منتج`
-                    }
+                    {previewData.length > 1000
+                      ? `رفع ${previewData.length} منتج (${
+                          quickAnalysis?.uniqueMasters || 0
+                        } منتج رئيسي)`
+                      : `رفع ${previewData.length} منتج`}
                   </span>
                 </button>
               )}
