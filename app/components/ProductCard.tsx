@@ -39,6 +39,10 @@ let employeeQuantitiesCache: Map<string, number> = new Map();
 export default function ProductCard({ product }: ProductCardProps) {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [isHovered, setIsHovered] = useState(false);
+  
+  // ✅ إضافة حالة تحميل الصورة
+  const [isImageLoading, setIsImageLoading] = useState(true);
+
   const { isEmployee } = useAuth();
 
   // ✅ الحالة الافتراضية للكمية يجب أن تكون null ليتم حسابها لاحقاً
@@ -202,19 +206,32 @@ export default function ProductCard({ product }: ProductCardProps) {
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      <div className="relative aspect-[3/4] overflow-hidden bg-gray-50">
+      <div className="relative aspect-[3/4] overflow-hidden bg-gray-100">
+        
+        {/* ✅ Skeleton Loader: يظهر فقط أثناء تحميل الصورة */}
+        {isImageLoading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-gray-200 animate-pulse z-10">
+            <svg className="w-10 h-10 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+          </div>
+        )}
+
+        {/* ✅ الصورة مع تأثير الانتقال الناعم */}
         <img
           src={mainImage}
           alt={getProductName()}
-          className="w-full h-full object-contain transition-all duration-500 group-hover:scale-110"
+          className={`w-full h-full object-contain transition-all duration-700 ease-in-out group-hover:scale-110 
+            ${isImageLoading ? 'scale-110 blur-2xl grayscale opacity-0' : 'scale-100 blur-0 grayscale-0 opacity-100'}`}
           loading="lazy"
+          onLoad={() => setIsImageLoading(false)}
         />
 
         {isEmployee && (
           <div
             className={`absolute top-3 left-3 px-3 py-1.5 rounded-full text-xs font-semibold border ${getQuantityColor(
               availableQuantity
-            )} shadow-sm`}
+            )} shadow-sm z-20`}
           >
             {getQuantityText(availableQuantity)}
           </div>
@@ -222,7 +239,7 @@ export default function ProductCard({ product }: ProductCardProps) {
 
         {product.variants.length > 1 && (
           <div
-            className={`absolute bottom-4 left-4 right-4 transition-all duration-300 ${
+            className={`absolute bottom-4 left-4 right-4 transition-all duration-300 z-20 ${
               isHovered
                 ? "translate-y-0 opacity-100"
                 : "translate-y-2 opacity-90"
@@ -246,6 +263,12 @@ export default function ProductCard({ product }: ProductCardProps) {
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
+                        
+                        // ✅ عند تغيير اللون، نعيد حالة التحميل للصورة الجديدة
+                        if (currentImageIndex !== index) {
+                          setIsImageLoading(true);
+                        }
+                        
                         setCurrentImageIndex(index);
 
                         // 🔥 تعديل هام: عند تغيير اللون، نعرض كمية هذا اللون فوراً
