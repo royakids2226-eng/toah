@@ -12,8 +12,16 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const category = searchParams.get("category");
     const search = searchParams.get("search");
-    const page = parseInt(searchParams.get("page") || "1");
-    const limit = parseInt(searchParams.get("limit") || "50");
+
+    // ✅ التعديل هنا: قراءة الصفحة والحد (Limit)
+    const pageParam = searchParams.get("page");
+    const limitParam = searchParams.get("limit");
+
+    // إذا لم يتم إرسال limit، نعتبره "غير محدود" (أو رقم كبير جداً) لضمان جلب كل البيانات
+    // هذا يحل مشكلة ظهور 6 صفحات فقط
+    const limit = limitParam ? parseInt(limitParam) : 10000;
+    const page = pageParam ? parseInt(pageParam) : 1;
+
     const employeeView = searchParams.get("employee") === "true";
     const isExport = searchParams.get("export") === "true";
 
@@ -54,6 +62,7 @@ export async function GET(request: Request) {
     const whereConditions =
       andConditions.length > 0 ? { AND: andConditions } : {};
 
+    // إذا كان تصدير، نجلب البيانات الخام فوراً
     if (isExport) {
       const rawProducts = await prisma.products.findMany({
         where: whereConditions,
@@ -62,6 +71,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ success: true, data: rawProducts });
     }
 
+    // ✅ جلب المنتجات (بدون استخدام take/skip هنا لضمان التجميع الصحيح أولاً)
     const allProductsRaw = await prisma.products.findMany({
       where: whereConditions,
       orderBy: { unique_id: "desc" },
@@ -110,17 +120,24 @@ export async function GET(request: Request) {
 
     const allGroupedProducts = Object.values(groupedByMasterCode);
     const totalProducts = allGroupedProducts.length;
-    const skip = (page - 1) * limit;
-    const paginatedProducts = allGroupedProducts.slice(skip, skip + limit);
+
+    // ✅ تطبيق الترقيم (Pagination) فقط إذا تم طلبه
+    // إذا لم يرسل الفرونت إند limit، فإننا نعيد كل المنتجات
+    let paginatedProducts = allGroupedProducts;
+
+    if (limitParam) {
+      const skip = (page - 1) * limit;
+      paginatedProducts = allGroupedProducts.slice(skip, skip + limit);
+    }
 
     return NextResponse.json({
       success: true,
       products: paginatedProducts,
       pagination: {
         page,
-        limit,
+        limit: limitParam ? limit : totalProducts, // إذا لم نحدد حداً، الحد هو الكل
         totalProducts,
-        totalPages: Math.ceil(totalProducts / limit),
+        totalPages: limitParam ? Math.ceil(totalProducts / limit) : 1,
       },
     });
   } catch (error: any) {

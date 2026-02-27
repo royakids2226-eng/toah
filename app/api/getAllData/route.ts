@@ -3,23 +3,17 @@ import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
-// ✅ تفعيل الكاش (اختياري، يسرع الاستجابة جداً)
-export const revalidate = 0; // 0 = لا كاش (لضمان البيانات الطازجة دائماً)، يمكن زيادته لـ 60
+// ✅ منع الكاش نهائياً لضمان جلب كل البيانات الجديدة
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const employeeView = searchParams.get("employee") === "true";
-    const categoryId = searchParams.get("categoryId");
-    
-    // ✅ تحسين: إضافة Pagination لتقليل الحمل
-    const limit = parseInt(searchParams.get("limit") || "1000"); // قللنا من 2000 لـ 1000 مبدئياً
-    
-    console.log("🌐 جلب البيانات:", {
-      employeeView,
-      categoryId,
-      limit
-    });
+
+    // ✅ طباعة للتأكد من الطلب
+    console.log("🚀 getAllData: Start fetching ALL products...");
 
     const whereConditions: any = {};
 
@@ -28,27 +22,26 @@ export async function GET(request: Request) {
       whereConditions.stor_id = 0;
     }
 
-    // ✅ جلب المنتجات مع الحد الجديد
+    // ✅ الخطوة الحاسمة: إزالة أي take أو limit نهائياً
     const productsRaw = await prisma.products.findMany({
       where: whereConditions,
       orderBy: {
-        item_name: "asc", // أو unique_id: 'desc' للأحدث
+        item_name: "asc", // ترتيب أبجدي
       },
-      take: limit, 
+      // ❌ تم حذف take: limit تماماً
     });
 
-    console.log(`📦 المنتجات الخام المجلوبة: ${productsRaw.length} منتج`);
+    console.log(`📦 تم جلب ${productsRaw.length} سطر من قاعدة البيانات`);
 
     const categories = await prisma.categories.findMany();
 
+    // --- منطق التجميع (Grouping) ---
     const groupedByMasterCode: { [key: string]: any } = {};
-    
+
     productsRaw.forEach((row) => {
       const masterCode = row.master_code;
-      if (!masterCode) {
-        // console.log("⚠️ منتج بدون master_code:", row.item_code);
-        return;
-      }
+      // تجاهل المنتجات التي ليس لها كود ماستر
+      if (!masterCode) return;
 
       const color = row.color || "افتراضي";
       const size = row.size || null;
@@ -65,8 +58,8 @@ export async function GET(request: Request) {
           group_name: row.group_name || "",
           kind_name: row.kind_name || "",
           item_name: row.item_name || "",
-          item_code: "", 
-          cur_qty: 0, 
+          item_code: "",
+          cur_qty: 0,
           variants: [],
         };
       }
@@ -76,9 +69,9 @@ export async function GET(request: Request) {
       );
 
       if (!variant) {
-        // ✅ المنطق الأصلي الكامل للصور
-        let imageUrl = "https://via.placeholder.com/500x700/EFEFEF/666666?text=No+Image";
-
+        // معالجة الصورة
+        let imageUrl =
+          "https://via.placeholder.com/500x700/EFEFEF/666666?text=No+Image";
         if (row.images) {
           const img = row.images.trim();
           if (img !== "" && img !== "null" && img !== "NULL") {
@@ -100,11 +93,11 @@ export async function GET(request: Request) {
           sizes: [],
           cur_qty: curQty,
           stor_id: row.stor_id || 0,
-          sizeItemCodes: {}, 
-          sizeQuantities: {}, 
+          sizeItemCodes: {},
+          sizeQuantities: {},
         };
         groupedByMasterCode[masterCode].variants.push(variant);
-        
+
         if (!groupedByMasterCode[masterCode].item_code) {
           groupedByMasterCode[masterCode].item_code = itemCode;
         }
@@ -120,12 +113,12 @@ export async function GET(request: Request) {
 
       if (size) {
         variant.sizeQuantities = variant.sizeQuantities || {};
-        variant.sizeQuantities[size] = (variant.sizeQuantities[size] || 0) + curQty;
-        
+        variant.sizeQuantities[size] =
+          (variant.sizeQuantities[size] || 0) + curQty;
         variant.sizeItemCodes = variant.sizeItemCodes || {};
         variant.sizeItemCodes[size] = itemCode;
       }
-      
+
       if (!size && itemCode) {
         variant.itemCode = itemCode;
       }
@@ -135,13 +128,14 @@ export async function GET(request: Request) {
       (product) => product.variants.length > 0
     );
 
-    console.log(`🎯 المنتجات المجمعة النهائية: ${finalProducts.length} موديل`);
+    console.log(`🎯 العدد النهائي للموديلات: ${finalProducts.length}`);
 
-    // إحصائيات الصور (كما في الكود الأصلي)
-    const productsWithImages = finalProducts.filter(p => 
-      p.variants.some((v: any) => 
-        !v.imageUrl.includes("placeholder.com") && 
-        !v.imageUrl.includes("via.placeholder")
+    // إحصائيات الصور
+    const productsWithImages = finalProducts.filter((p) =>
+      p.variants.some(
+        (v: any) =>
+          !v.imageUrl.includes("placeholder.com") &&
+          !v.imageUrl.includes("via.placeholder")
       )
     ).length;
 
@@ -159,7 +153,6 @@ export async function GET(request: Request) {
         employee: employeeView,
       },
     });
-
   } catch (error: any) {
     console.error("❌ Error in getAllData API:", error);
     return NextResponse.json({
