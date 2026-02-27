@@ -135,14 +135,7 @@ export default function Footer() {
                   الرئيسية
                 </Link>
               </li>
-              <li>
-                <Link
-                  href="/categories"
-                  className="text-base text-gray-300 hover:text-white transition-colors"
-                >
-                  جميع التصنيفات
-                </Link>
-              </li>
+              <li></li>
               <li>
                 <Link
                   href="/contact"
