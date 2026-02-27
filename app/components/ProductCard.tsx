@@ -40,13 +40,16 @@ export default function ProductCard({ product }: ProductCardProps) {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [isHovered, setIsHovered] = useState(false);
   const { isEmployee } = useAuth();
-  
+
   // ✅ الحالة الافتراضية للكمية يجب أن تكون null ليتم حسابها لاحقاً
   const [currentQuantity, setCurrentQuantity] = useState<number | null>(null);
 
   // 🔥 1. حساب إجمالي المخزون من جميع الألوان المتاحة في البيانات
   // هذا يضمن أن الكارت يظهر "متوفر" إذا كان أي لون يحتوي على كمية
-  const totalStock = product.variants.reduce((acc, variant) => acc + (variant.cur_qty || 0), 0);
+  const totalStock = product.variants.reduce(
+    (acc, variant) => acc + (variant.cur_qty || 0),
+    0
+  );
 
   // ✅ جلب كميات الموظف عند تحميل المكون
   useEffect(() => {
@@ -64,7 +67,11 @@ export default function ProductCard({ product }: ProductCardProps) {
         }
 
         // ✅ استخدام API المنتجات لجلب أحدث البيانات
-        const response = await fetch(`/api/products?employee=true&search=${product.master_code || product.modelId}`);
+        const response = await fetch(
+          `/api/products?employee=true&search=${
+            product.master_code || product.modelId
+          }`
+        );
 
         if (response.ok) {
           const data = await response.json();
@@ -77,10 +84,11 @@ export default function ProductCard({ product }: ProductCardProps) {
           if (employeeProduct) {
             // نستخدم الكمية القادمة من السيرفر، أو نستخدم المجموع المحسوب
             const quantity = employeeProduct.cur_qty || 0;
-            
+
             // 🔥 تعديل: إذا كانت كمية السيرفر 0 ولكن لدينا مجموع محلي > 0، نستخدم المجموع المحلي
             // هذا يحل مشكلة ظهور "غير متوفر" بينما توجد ألوان
-            const finalQty = (quantity === 0 && totalStock > 0) ? totalStock : quantity;
+            const finalQty =
+              quantity === 0 && totalStock > 0 ? totalStock : quantity;
 
             setCurrentQuantity(finalQty);
             employeeQuantitiesCache.set(cacheKey, finalQty);
@@ -101,7 +109,13 @@ export default function ProductCard({ product }: ProductCardProps) {
     if (isEmployee) {
       fetchEmployeeQuantities();
     }
-  }, [isEmployee, product.modelId, product.master_code, totalStock, currentQuantity]);
+  }, [
+    isEmployee,
+    product.modelId,
+    product.master_code,
+    totalStock,
+    currentQuantity,
+  ]);
 
   // ✅ الحصول على الكمية للعرض
   const getDisplayQuantity = () => {
@@ -149,13 +163,34 @@ export default function ProductCard({ product }: ProductCardProps) {
 
   const getColorHex = (colorName: string) => {
     const colorMap: { [key: string]: string } = {
-      أحمر: "#ef4444", أخضر: "#22c55e", أزرق: "#3b82f6", أصفر: "#eab308",
-      وردي: "#ec4899", بنفسجي: "#8b5cf6", برتقالي: "#f97316", أسود: "#000000",
-      أبيض: "#ffffff", رمادي: "#6b7280", بني: "#a16207", ذهبي: "#f59e0b",
-      فضي: "#94a3b8", كريم: "#fef3c7", سكري: "#f0f9ff", نيون: "#4ade80",
-      تركواز: "#06b6d4", كحلي: "#1e3a8a", زيتي: "#3f6212", بيج: "#f5f5dc",
-      نبيتي: "#800000", رصاصي: "#71717a", "سيمون": "#ff7f50", "موف": "#a855f7",
-      "جنزاري": "#008b8b", "كشمير": "#e6a8d7", "هافان": "#cd7f32", "مسطردة": "#ffdb58"
+      أحمر: "#ef4444",
+      أخضر: "#22c55e",
+      أزرق: "#3b82f6",
+      أصفر: "#eab308",
+      وردي: "#ec4899",
+      بنفسجي: "#8b5cf6",
+      برتقالي: "#f97316",
+      أسود: "#000000",
+      أبيض: "#ffffff",
+      رمادي: "#6b7280",
+      بني: "#a16207",
+      ذهبي: "#f59e0b",
+      فضي: "#94a3b8",
+      كريم: "#fef3c7",
+      سكري: "#f0f9ff",
+      نيون: "#4ade80",
+      تركواز: "#06b6d4",
+      كحلي: "#1e3a8a",
+      زيتي: "#3f6212",
+      بيج: "#f5f5dc",
+      نبيتي: "#800000",
+      رصاصي: "#71717a",
+      سيمون: "#ff7f50",
+      موف: "#a855f7",
+      جنزاري: "#008b8b",
+      كشمير: "#e6a8d7",
+      هافان: "#cd7f32",
+      مسطردة: "#ffdb58",
     };
     return colorMap[colorName] || "#6b7280";
   };
