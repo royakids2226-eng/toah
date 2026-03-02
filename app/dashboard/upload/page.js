@@ -1,524 +1,926 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import Header from "@/app/components/Header";
+import { useState, useEffect, useRef, useCallback } from "react";
+import Header from "../../components/Header";
 
-export default function UploadImages() {
-  const router = useRouter();
-  const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [uploadResults, setUploadResults] = useState([]);
-  const [productsWithoutImages, setProductsWithoutImages] = useState([]);
-  const [loadingProducts, setLoadingProducts] = useState(true);
-  const [stats, setStats] = useState({
-    total: 0,
-    withImages: 0,
-    withoutImages: 0,
-  });
+// ==========================================
+// Helper Components
+// ==========================================
+
+// 1. Toast Notification Component
+const ToastContainer = ({ toasts, removeToast }) => {
+  return (
+    <div className="fixed bottom-4 left-4 z-50 flex flex-col gap-2 pointer-events-none">
+      {toasts.map((toast) => (
+        <div
+          key={toast.id}
+          onClick={() => removeToast(toast.id)}
+          className={`pointer-events-auto px-4 py-3 rounded-lg shadow-lg text-white text-sm font-medium cursor-pointer transition-all transform hover:scale-105 flex items-center gap-2 min-w-[300px] animate-slideIn ${
+            toast.type === "success"
+              ? "bg-green-600"
+              : toast.type === "error"
+              ? "bg-red-600"
+              : "bg-blue-600"
+          }`}
+        >
+          <span>
+            {toast.type === "success"
+              ? "✅"
+              : toast.type === "error"
+              ? "❌"
+              : "ℹ️"}
+          </span>
+          {toast.message}
+        </div>
+      ))}
+    </div>
+  );
+};
+
+// ==========================================
+// Main Page Component
+// ==========================================
+export default function UploadDashboard() {
+  // --- State: UI & Tabs ---
+  const [activeTab, setActiveTab] = useState("upload");
+  const [toasts, setToasts] = useState([]);
+
+  // --- State: Upload Tab ---
+  const [files, setFiles] = useState([]);
+  const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef(null);
+  const [isGlobalUploading, setIsGlobalUploading] = useState(false);
 
-  // جلب المنتجات التي تحتاج صور
-  useEffect(() => {
-    const fetchProductsWithoutImages = async () => {
-      try {
-        setLoadingProducts(true);
-        const response = await fetch("/api/match-images");
-        const data = await response.json();
+  // --- State: Manage Tab ---
+  const [searchTerm, setSearchTerm] = useState("");
+  const [filterType, setFilterType] = useState("all");
+  const [items, setItems] = useState([]);
+  const [loadingProducts, setLoadingProducts] = useState(false);
+  const [loadingActionId, setLoadingActionId] = useState(null);
+  const [pagination, setPagination] = useState({
+    page: 1,
+    limit: 50,
+    total: 0,
+    totalPages: 1,
+  });
 
-        if (data.statistics) {
-          setProductsWithoutImages(data.productsWithoutImages || []);
-          setStats({
-            total: data.statistics.totalProducts,
-            withImages: data.statistics.productsWithImages,
-            withoutImages: data.statistics.productsWithoutImages,
-          });
-        }
-      } catch (error) {
-        console.error("Error fetching products:", error);
-      } finally {
-        setLoadingProducts(false);
-      }
-    };
+  // ==========================================
+  // Helper Functions
+  // ==========================================
+  const addToast = (message, type = "info") => {
+    const id = Math.random().toString(36).substring(2, 9);
+    setToasts((prev) => [...prev, { id, message, type }]);
+    setTimeout(() => removeToast(id), 5000);
+  };
 
-    fetchProductsWithoutImages();
-  }, []);
+  const removeToast = (id) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  };
 
-  const handleFileSelect = async (event) => {
-    const files = Array.from(event.target.files);
-    if (files.length === 0) return;
+  const formatBytes = (bytes, decimals = 2) => {
+    if (bytes === 0) return "0 Bytes";
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ["Bytes", "KB", "MB", "GB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i];
+  };
 
-    setUploading(true);
-    setUploadProgress(0);
-    setUploadResults([]);
+  // ==========================================
+  // Tab 1 Logic: Upload & Drag-n-Drop
+  // ==========================================
+  const handleDragEnter = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
 
-    const results = [];
-
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-
-      try {
-        const formData = new FormData();
-        formData.append("file", file);
-
-        const response = await fetch("/api/upload", {
-          method: "POST",
-          body: formData,
-        });
-
-        const result = await response.json();
-
-        results.push({
-          fileName: file.name,
-          success: result.success,
-          message: result.message,
-          imageUrl: result.image?.url,
-          product: result.product,
-          error: result.error,
-          itemCode: result.product?.code,
-        });
-
-        // تحديث التقدم
-        setUploadProgress(Math.round(((i + 1) / files.length) * 100));
-
-        // تحديث قائمة المنتجات بدون صور إذا نجح الرفع
-        if (result.success && result.product) {
-          setProductsWithoutImages((prev) =>
-            prev.filter((p) => p.item_code !== result.product.code)
-          );
-          setStats((prev) => ({
-            ...prev,
-            withImages: prev.withImages + 1,
-            withoutImages: prev.withoutImages - 1,
-          }));
-        }
-      } catch (error) {
-        results.push({
-          fileName: file.name,
-          success: false,
-          message: "فشل في رفع الملف",
-          error: error.message,
-        });
-      }
-    }
-
-    setUploadResults(results);
-    setUploading(false);
-    setUploadProgress(0);
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
   };
 
   const handleDragOver = (e) => {
     e.preventDefault();
+    e.stopPropagation();
   };
 
   const handleDrop = (e) => {
     e.preventDefault();
-    const files = Array.from(e.dataTransfer.files);
-    if (files.length > 0) {
-      handleFileSelect({ target: { files } });
+    e.stopPropagation();
+    setIsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      processFiles(e.dataTransfer.files);
     }
   };
 
-  const matchImagesWithProducts = async () => {
+  const handleFileSelect = (e) => {
+    if (e.target.files && e.target.files.length > 0) {
+      processFiles(e.target.files);
+    }
+  };
+
+  const processFiles = (fileList) => {
+    const newFiles = Array.from(fileList).map((file) => ({
+      id: Math.random().toString(36).substring(2, 9),
+      file,
+      preview: URL.createObjectURL(file),
+      progress: 0,
+      status: "pending",
+      productCode: file.name.substring(0, file.name.lastIndexOf(".")),
+    }));
+
+    setFiles((prev) => [...prev, ...newFiles]);
+  };
+
+  const removeFile = (id) => {
+    setFiles((prev) => prev.filter((f) => f.id !== id));
+  };
+
+  const uploadAllFiles = async () => {
+    const pendingFiles = files.filter(
+      (f) => f.status === "pending" || f.status === "error"
+    );
+    if (pendingFiles.length === 0) {
+      addToast("لا توجد ملفات جديدة للرفع", "info");
+      return;
+    }
+
+    setIsGlobalUploading(true);
+
+    for (const fileObj of pendingFiles) {
+      setFiles((prev) =>
+        prev.map((f) =>
+          f.id === fileObj.id ? { ...f, status: "uploading", progress: 10 } : f
+        )
+      );
+
+      const formData = new FormData();
+      formData.append("file", fileObj.file);
+
+      try {
+        setFiles((prev) =>
+          prev.map((f) => (f.id === fileObj.id ? { ...f, progress: 50 } : f))
+        );
+
+        const res = await fetch("/api/upload", {
+          method: "POST",
+          body: formData,
+        });
+
+        const data = await res.json();
+
+        if (data.success) {
+          setFiles((prev) =>
+            prev.map((f) =>
+              f.id === fileObj.id
+                ? {
+                    ...f,
+                    status: "success",
+                    progress: 100,
+                    message: data.message || "تم الرفع",
+                  }
+                : f
+            )
+          );
+        } else {
+          throw new Error(data.error || "فشل الرفع");
+        }
+      } catch (error) {
+        setFiles((prev) =>
+          prev.map((f) =>
+            f.id === fileObj.id
+              ? { ...f, status: "error", progress: 0, message: error.message }
+              : f
+          )
+        );
+      }
+    }
+
+    setIsGlobalUploading(false);
+    addToast("اكتملت عملية المعالجة", "info");
+  };
+
+  // ==========================================
+  // Tab 2 Logic: Manage & Gallery
+  // ==========================================
+
+  const fetchProducts = useCallback(
+    async (resetPage = false) => {
+      setLoadingProducts(true);
+      try {
+        const page = resetPage ? 1 : pagination.page;
+        const queryParams = new URLSearchParams({
+          page: page.toString(),
+          limit: pagination.limit.toString(),
+          search: searchTerm,
+          employee: "true",
+        });
+
+        const res = await fetch(`/api/products?${queryParams.toString()}`);
+        const data = await res.json();
+
+        if (data.success && data.products) {
+          console.log("📦 البيانات القادمة من الـ API:", data.products[0]); // للمراجعة في الكونسول
+
+          const flatItems = [];
+
+          data.products.forEach((group) => {
+            // ✅ التعامل مع Variants (الألوان/المقاسات)
+            if (group.variants && group.variants.length > 0) {
+              group.variants.forEach((variant) => {
+                // ✅ محاولة استخراج كود الصنف بكل الطرق الممكنة كنص
+                let rawItemCode = variant.item_code || variant.itemCode;
+
+                // إذا لم نجد كود في الفاريانت، نأخذه من الجروب الرئيسي إذا لم يكن هو الماستر كود
+                if (
+                  !rawItemCode &&
+                  group.item_code &&
+                  group.item_code !== group.master_code
+                ) {
+                  rawItemCode = group.item_code;
+                }
+
+                // ✅ تحويل نهائي إلى String، وإذا كان فارغاً نستخدم "N/A" للعرض فقط (لكن نحتفظ بالقيمة الأصلية للمنطق)
+                const itemCodeStr = rawItemCode ? String(rawItemCode) : "N/A";
+
+                flatItems.push({
+                  uniqueKey: variant.id || Math.random().toString(),
+                  id: variant.id,
+                  item_code: itemCodeStr, // هذا هو النص الذي سيظهر
+                  real_item_code: rawItemCode, // القيمة الحقيقية للاستخدام في الرفع
+                  master_code: String(group.master_code || "N/A"),
+                  description: group.description,
+                  color: variant.color,
+                  imageUrl:
+                    variant.imageUrl &&
+                    !variant.imageUrl.includes("placeholder")
+                      ? variant.imageUrl
+                      : null,
+                  hasImage: !!(
+                    variant.imageUrl &&
+                    !variant.imageUrl.includes("placeholder")
+                  ),
+                });
+              });
+            } else {
+              // ✅ التعامل مع المنتجات الفردية
+              const rawItemCode = group.item_code || group.modelId;
+              const itemCodeStr = rawItemCode ? String(rawItemCode) : "N/A";
+
+              flatItems.push({
+                uniqueKey: group.modelId,
+                id: group.modelId,
+                item_code: itemCodeStr,
+                real_item_code: rawItemCode,
+                master_code: String(group.master_code || "N/A"),
+                description: group.description,
+                color: "افتراضي",
+                imageUrl: null,
+                hasImage: false,
+              });
+            }
+          });
+
+          let filtered = flatItems;
+          if (filterType === "with-image") {
+            filtered = filtered.filter((item) => item.hasImage);
+          } else if (filterType === "no-image") {
+            filtered = filtered.filter((item) => !item.hasImage);
+          }
+
+          setItems(filtered);
+          setPagination((prev) => ({
+            ...prev,
+            page,
+            total: data.pagination?.totalProducts || 0,
+            totalPages: data.pagination?.totalPages || 1,
+          }));
+        }
+      } catch (error) {
+        console.error("Error fetching products:", error);
+        addToast("فشل في جلب المنتجات", "error");
+      } finally {
+        setLoadingProducts(false);
+      }
+    },
+    [searchTerm, filterType, pagination.page, pagination.limit]
+  );
+
+  const handlePageChange = (newPage) => {
+    if (newPage >= 1 && newPage <= pagination.totalPages) {
+      setPagination((prev) => ({ ...prev, page: newPage }));
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === "manage") {
+      fetchProducts();
+    }
+  }, [activeTab, pagination.page]);
+
+  useEffect(() => {
+    if (activeTab === "manage") {
+      fetchProducts(true);
+    }
+  }, [searchTerm, filterType]);
+
+  const handleDeleteImage = async (item) => {
+    if (!item.imageUrl) return;
+
+    if (
+      !confirm(
+        `هل أنت متأكد من حذف صورة الصنف ${item.item_code} (${item.color})؟`
+      )
+    ) {
+      return;
+    }
+
+    setLoadingActionId(item.uniqueKey);
+
     try {
-      const response = await fetch("/api/match-images", {
-        method: "POST",
+      const res = await fetch("/api/upload", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imageUrl: item.imageUrl,
+          // نستخدم الكود الحقيقي (حتى لو كان نصاً) أو ما يظهر للمستخدم
+          productId: String(item.real_item_code || item.item_code),
+        }),
       });
 
-      const result = await response.json();
+      const result = await res.json();
 
       if (result.success) {
-        alert(`✅ تمت المطابقة: ${result.matched} صورة مرتبطة مع المنتجات`);
-        // إعادة تحميل القائمة
-        const statsResponse = await fetch("/api/match-images");
-        const statsData = await statsResponse.json();
-        if (statsData.statistics) {
-          setProductsWithoutImages(statsData.productsWithoutImages || []);
-          setStats({
-            total: statsData.statistics.totalProducts,
-            withImages: statsData.statistics.productsWithImages,
-            withoutImages: statsData.statistics.productsWithoutImages,
-          });
+        addToast("تم حذف الصورة بنجاح", "success");
+        setItems((prev) =>
+          prev.map((p) => {
+            if (p.uniqueKey === item.uniqueKey) {
+              return { ...p, imageUrl: null, hasImage: false };
+            }
+            return p;
+          })
+        );
+      } else {
+        addToast(result.error || "فشل الحذف", "error");
+      }
+    } catch (error) {
+      addToast("حدث خطأ في الاتصال", "error");
+    } finally {
+      setLoadingActionId(null);
+    }
+  };
+
+  // استبدال صورة
+  const handleReplaceImage = async (file, item) => {
+    const extension = file.name.substring(file.name.lastIndexOf("."));
+
+    // ✅ الأولوية القصوى لـ item_code النصي
+    let codeToUse = item.real_item_code || item.item_code;
+
+    // إذا كان الكود غير صالح، نستخدم الماستر كود كخيار أخير
+    if (!codeToUse || codeToUse === "N/A" || codeToUse === "null") {
+      codeToUse = item.master_code;
+    }
+
+    if (!codeToUse || codeToUse === "N/A" || codeToUse === "null") {
+      addToast("لا يوجد كود صالح لهذا المنتج لتسمية الصورة", "error");
+      return;
+    }
+
+    // ✅ تنظيف الكود (إزالة المسافات الزائدة) واستخدامه كنص
+    const safeCode = String(codeToUse).trim();
+    const newFileName = `${safeCode}${extension}`;
+
+    console.log(`📤 جاري رفع الصورة باسم: ${newFileName}`); // للمراجعة
+
+    const renamedFile = new File([file], newFileName, { type: file.type });
+    const formData = new FormData();
+    formData.append("file", renamedFile);
+
+    setLoadingActionId(item.uniqueKey);
+
+    try {
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      const result = await res.json();
+
+      if (result.success) {
+        addToast(`تم تحديث صورة ${item.color} بنجاح`, "success");
+        const newImageUrl = result.image?.url;
+        if (newImageUrl) {
+          setItems((prev) =>
+            prev.map((p) => {
+              if (p.uniqueKey === item.uniqueKey) {
+                return { ...p, imageUrl: newImageUrl, hasImage: true };
+              }
+              return p;
+            })
+          );
         }
       } else {
-        alert("❌ فشل في المطابقة: " + result.error);
+        addToast(result.error || "فشل الرفع", "error");
       }
     } catch (error) {
-      alert("❌ خطأ في الاتصال بالسيرفر");
-    }
-  };
-
-  const refreshProductsList = async () => {
-    try {
-      setLoadingProducts(true);
-      const response = await fetch("/api/match-images");
-      const data = await response.json();
-
-      if (data.statistics) {
-        setProductsWithoutImages(data.productsWithoutImages || []);
-        setStats({
-          total: data.statistics.totalProducts,
-          withImages: data.statistics.productsWithImages,
-          withoutImages: data.statistics.productsWithoutImages,
-        });
-        alert("✅ تم تحديث قائمة المنتجات");
-      }
-    } catch (error) {
-      alert("❌ خطأ في تحديث القائمة");
+      addToast("حدث خطأ أثناء الرفع", "error");
     } finally {
-      setLoadingProducts(false);
+      setLoadingActionId(null);
     }
   };
 
-  const clearResults = () => {
-    setUploadResults([]);
-  };
-
+  // ==========================================
+  // Render UI
+  // ==========================================
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 pb-20">
       <Header />
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
 
-      <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
-        {/* رأس الصفحة */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">
-            رفع الصور للمنتجات
-          </h1>
-          <p className="text-gray-600 mt-2">
-            ارفع الصور وسيتم ربطها تلقائياً مع المنتجات بناءً على اسم الملف
-          </p>
+      <main className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
+        {/* Header Section */}
+        <div className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">
+              مركز رفع وإدارة الصور
+            </h1>
+            <p className="text-gray-600 mt-1">
+              إدارة الصور المستضافة على Cloudflare R2، الرفع الجماعي، والحذف.
+            </p>
+          </div>
+
+          <div className="bg-white p-1 rounded-xl shadow-sm border border-gray-200 inline-flex">
+            <button
+              onClick={() => setActiveTab("upload")}
+              className={`px-6 py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 ${
+                activeTab === "upload"
+                  ? "bg-blue-600 text-white shadow-md"
+                  : "text-gray-600 hover:bg-gray-50"
+              }`}
+            >
+              📤 رفع جماعي
+            </button>
+            <button
+              onClick={() => setActiveTab("manage")}
+              className={`px-6 py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 ${
+                activeTab === "manage"
+                  ? "bg-blue-600 text-white shadow-md"
+                  : "text-gray-600 hover:bg-gray-50"
+              }`}
+            >
+              🖼️ المعرض والإدارة
+            </button>
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* العمود الأيسر - رفع الصور */}
-          <div className="lg:col-span-2 space-y-6">
-            {/* إحصائيات سريعة */}
-            <div className="grid grid-cols-3 gap-4">
-              <div className="bg-white rounded-lg p-4 text-center border">
-                <div className="text-2xl font-bold text-blue-600">
-                  {stats.total}
-                </div>
-                <div className="text-sm text-gray-600">إجمالي المنتجات</div>
-              </div>
-              <div className="bg-white rounded-lg p-4 text-center border">
-                <div className="text-2xl font-bold text-green-600">
-                  {stats.withImages}
-                </div>
-                <div className="text-sm text-gray-600">بها صور</div>
-              </div>
-              <div className="bg-white rounded-lg p-4 text-center border">
-                <div className="text-2xl font-bold text-orange-600">
-                  {stats.withoutImages}
-                </div>
-                <div className="text-sm text-gray-600">تحتاج صور</div>
-              </div>
-            </div>
-
-            {/* منطقة رفع الملفات */}
-            <div className="bg-white rounded-xl shadow-sm p-8 border-2 border-dashed border-blue-300">
-              <div
-                onDragOver={handleDragOver}
-                onDrop={handleDrop}
-                className="text-center"
-              >
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  onChange={handleFileSelect}
-                  multiple
-                  accept="image/*"
-                  className="hidden"
-                />
-
-                <div className="mb-4">
-                  <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                    <span className="text-3xl">📸</span>
-                  </div>
-                  <h3 className="text-xl font-medium text-gray-900 mb-2">
-                    اسحب وأفلت الصور هنا
-                  </h3>
-                  <p className="text-gray-600 mb-4">أو انقر لاختيار الملفات</p>
-                </div>
-
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={uploading}
-                  className="bg-blue-600 text-white px-8 py-3 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-lg font-medium"
+        {/* ======================= TAB 1: UPLOAD ======================= */}
+        {activeTab === "upload" && (
+          <div className="space-y-6 animate-fadeIn">
+            <div
+              onDragEnter={handleDragEnter}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              className={`border-3 border-dashed rounded-2xl p-12 text-center transition-all duration-300 ${
+                isDragging
+                  ? "border-blue-500 bg-blue-50 scale-[1.01]"
+                  : "border-gray-300 bg-white hover:border-blue-400"
+              }`}
+            >
+              <div className="w-20 h-20 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg
+                  className="w-10 h-10"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
                 >
-                  {uploading ? "🔄 جاري الرفع..." : "📁 اختيار الصور"}
-                </button>
-
-                <p className="text-xs text-gray-500 mt-4">
-                  المدعوم: JPG, PNG, GIF, WebP • اسم الملف يجب أن يطابق كود
-                  المنتج
-                </p>
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                  />
+                </svg>
               </div>
+              <h3 className="text-xl font-bold text-gray-900 mb-2">
+                اسحب وأفلت الصور هنا
+              </h3>
+              <p className="text-gray-500 mb-6">
+                أو اضغط لاختيار الملفات من جهازك. يفضل تسمية الملفات بكود المنتج
+                (مثلاً: <code>1001.jpg</code>).
+              </p>
 
-              {/* شريط التقدم */}
-              {uploading && (
-                <div className="mt-6">
-                  <div className="flex justify-between text-sm text-gray-600 mb-2">
-                    <span>جاري رفع الصور...</span>
-                    <span>{uploadProgress}%</span>
-                  </div>
-                  <div className="w-full bg-gray-200 rounded-full h-2">
-                    <div
-                      className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                      style={{ width: `${uploadProgress}%` }}
-                    ></div>
-                  </div>
-                </div>
-              )}
+              <input
+                type="file"
+                multiple
+                accept="image/*"
+                className="hidden"
+                ref={fileInputRef}
+                onChange={handleFileSelect}
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="bg-blue-600 text-white px-8 py-3 rounded-xl shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 transition-all font-bold"
+              >
+                اختر ملفات الصور
+              </button>
             </div>
 
-            {/* نتائج الرفع */}
-            {uploadResults.length > 0 && (
-              <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-lg font-medium text-gray-900">
-                    نتائج الرفع ({uploadResults.length})
-                  </h3>
-                  <button
-                    onClick={clearResults}
-                    className="text-gray-500 hover:text-gray-700 text-sm bg-gray-100 px-3 py-1 rounded"
-                  >
-                    مسح النتائج
-                  </button>
+            {files.length > 0 && (
+              <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex justify-between items-center">
+                <div className="text-gray-700 font-medium">
+                  تم اختيار {files.length} ملف (
+                  {formatBytes(files.reduce((acc, f) => acc + f.file.size, 0))})
                 </div>
-                <div className="space-y-3 max-h-96 overflow-y-auto">
-                  {uploadResults.map((result, index) => (
-                    <div
-                      key={index}
-                      className={`p-4 rounded-lg border-2 ${
-                        result.success
-                          ? "bg-green-50 border-green-200"
-                          : "bg-red-50 border-red-200"
-                      }`}
-                    >
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-3 mb-2">
-                            {result.success ? (
-                              <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                                <span className="text-xl">✅</span>
-                              </div>
-                            ) : (
-                              <div className="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                                <span className="text-xl">❌</span>
-                              </div>
-                            )}
-
-                            <div className="flex-1">
-                              <p className="font-medium text-gray-900">
-                                {result.fileName}
-                              </p>
-                              {result.product && (
-                                <p className="text-sm text-gray-600">
-                                  المنتج: {result.product.name} (كود:{" "}
-                                  {result.product.code})
-                                </p>
-                              )}
-                            </div>
-                          </div>
-
-                          <p
-                            className={`text-sm ${
-                              result.success ? "text-green-700" : "text-red-700"
-                            }`}
-                          >
-                            {result.message || result.error}
-                          </p>
-
-                          {result.success && result.imageUrl && (
-                            <div className="mt-3 p-2 bg-white rounded border">
-                              <div className="flex items-center gap-3">
-                                <img
-                                  src={result.imageUrl}
-                                  alt={result.fileName}
-                                  className="w-16 h-16 object-cover rounded border"
-                                  onError={(e) => {
-                                    e.target.style.display = "none";
-                                  }}
-                                />
-                                <div className="flex-1">
-                                  <p className="text-xs text-gray-500">
-                                    رابط الصورة:
-                                  </p>
-                                  <a
-                                    href={result.imageUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-blue-600 text-sm hover:underline break-all"
-                                  >
-                                    {result.imageUrl}
-                                  </a>
-                                </div>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setFiles([])}
+                    className="px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors font-medium"
+                    disabled={isGlobalUploading}
+                  >
+                    مسح الكل
+                  </button>
+                  <button
+                    onClick={uploadAllFiles}
+                    disabled={isGlobalUploading}
+                    className={`px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-bold shadow-md flex items-center gap-2 ${
+                      isGlobalUploading ? "opacity-75 cursor-not-allowed" : ""
+                    }`}
+                  >
+                    {isGlobalUploading ? (
+                      <>
+                        <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                        جاري الرفع...
+                      </>
+                    ) : (
+                      <>🚀 بدء الرفع</>
+                    )}
+                  </button>
                 </div>
               </div>
             )}
 
-            {/* إجراءات إضافية */}
-            <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-lg font-medium text-gray-900 mb-2">
-                    إجراءات إضافية
-                  </h3>
-                  <p className="text-gray-600 text-sm">إدارة الصور والمنتجات</p>
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={refreshProductsList}
-                    disabled={loadingProducts}
-                    className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition-colors disabled:opacity-50 text-sm"
-                  >
-                    {loadingProducts ? "🔄 جاري..." : "تحديث القائمة"}
-                  </button>
-                  <button
-                    onClick={matchImagesWithProducts}
-                    className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors text-sm"
-                  >
-                    فحص تلقائي
-                  </button>
-                </div>
-              </div>
-            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              {files.map((file) => (
+                <div
+                  key={file.id}
+                  className={`bg-white rounded-xl p-3 shadow-sm border relative group transition-all duration-300 ${
+                    file.status === "error"
+                      ? "border-red-300 bg-red-50"
+                      : file.status === "success"
+                      ? "border-green-300 bg-green-50"
+                      : "border-gray-200"
+                  }`}
+                >
+                  {file.status !== "uploading" && (
+                    <button
+                      onClick={() => removeFile(file.id)}
+                      className="absolute -top-2 -right-2 bg-red-500 text-white w-6 h-6 rounded-full flex items-center justify-center shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-10 hover:bg-red-600"
+                    >
+                      ×
+                    </button>
+                  )}
 
-            {/* تعليمات */}
-            <div className="bg-blue-50 rounded-xl p-6 border border-blue-200">
-              <h4 className="font-medium text-blue-900 mb-3 text-lg">
-                🎯 كيف يعمل النظام؟
-              </h4>
-              <ul className="text-blue-800 text-sm space-y-2">
-                <li className="flex items-start gap-2">
-                  <span>•</span>
-                  <span>
-                    اسم الصورة يجب أن يطابق{" "}
-                    <code className="bg-blue-100 px-1 rounded">item_code</code>{" "}
-                    للمنتج (مثال: 3001.1.jpg)
-                  </span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span>•</span>
-                  <span>
-                    سيتم رفع الصورة إلى{" "}
-                    <code className="bg-blue-100 px-1 rounded">
-                      /home/mounir/images/
-                    </code>
-                  </span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span>•</span>
-                  <span>
-                    الرابط سيكون:{" "}
-                    <code className="bg-blue-100 px-1 rounded">
-                      https://www.royakids.shop/images/اسم-الصورة.jpg
-                    </code>
-                  </span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span>•</span>
-                  <span>
-                    سيتم ربط الصورة تلقائياً مع المنتج في قاعدة البيانات
-                  </span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span>•</span>
-                  <span>يمكنك رفع multiple صور مرة واحدة</span>
-                </li>
-              </ul>
-            </div>
-          </div>
+                  <div className="flex gap-3">
+                    <div className="w-20 h-20 relative flex-shrink-0 bg-gray-100 rounded-lg overflow-hidden border border-gray-100">
+                      <img
+                        src={file.preview}
+                        alt="Preview"
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
 
-          {/* العمود الأيمن - المنتجات التي تحتاج صور */}
-          <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200 h-fit">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-medium text-gray-900">
-                المنتجات التي تحتاج صور
-              </h3>
-              <span className="text-sm text-gray-500">
-                {loadingProducts
-                  ? "جاري التحميل..."
-                  : `${productsWithoutImages.length} منتج`}
-              </span>
-            </div>
+                    <div className="flex-1 min-w-0 flex flex-col justify-center">
+                      <p
+                        className="text-sm font-bold text-gray-800 truncate"
+                        title={file.file.name}
+                      >
+                        {file.file.name}
+                      </p>
+                      <p className="text-xs text-gray-500 mb-2">
+                        {formatBytes(file.file.size)}
+                        {file.productCode && (
+                          <span className="block text-blue-600 mt-0.5">
+                            كود: {file.productCode}
+                          </span>
+                        )}
+                      </p>
 
-            {loadingProducts ? (
-              <div className="text-center py-8">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-                <p className="text-gray-600 mt-2">جاري تحميل المنتجات...</p>
-              </div>
-            ) : productsWithoutImages.length > 0 ? (
-              <div className="space-y-3 max-h-[500px] overflow-y-auto">
-                {productsWithoutImages.map((product, index) => (
-                  <div
-                    key={index}
-                    className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200 hover:bg-gray-100 transition-colors"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="font-medium text-gray-900 bg-white px-2 py-1 rounded text-sm border">
-                          {product.item_code}
+                      <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
+                        <div
+                          className={`h-full transition-all duration-300 ${
+                            file.status === "success"
+                              ? "bg-green-500"
+                              : file.status === "error"
+                              ? "bg-red-500"
+                              : "bg-blue-500"
+                          }`}
+                          style={{ width: `${file.progress}%` }}
+                        ></div>
+                      </div>
+
+                      <div className="flex justify-between items-center mt-1">
+                        <span
+                          className={`text-[10px] font-semibold ${
+                            file.status === "success"
+                              ? "text-green-600"
+                              : file.status === "error"
+                              ? "text-red-600"
+                              : "text-blue-600"
+                          }`}
+                        >
+                          {file.status === "uploading"
+                            ? "جاري الرفع..."
+                            : file.status === "success"
+                            ? "تم بنجاح"
+                            : file.status === "error"
+                            ? "فشل"
+                            : "انتظار"}
                         </span>
-                        <span className="text-gray-600 text-sm truncate">
-                          {product.item_name}
+                        <span className="text-[10px] text-gray-400">
+                          {file.progress}%
                         </span>
                       </div>
-                      {product.unique_id && (
-                        <p className="text-xs text-gray-400">
-                          ID: {product.unique_id}
+
+                      {file.message && (
+                        <p
+                          className="text-[10px] mt-1 truncate"
+                          title={file.message}
+                        >
+                          {file.message}
                         </p>
                       )}
                     </div>
-                    <span className="text-xs bg-red-100 text-red-800 px-2 py-1 rounded-full whitespace-nowrap flex-shrink-0">
-                      بدون صورة
-                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ======================= TAB 2: MANAGE ======================= */}
+        {activeTab === "manage" && (
+          <div className="space-y-6 animate-fadeIn">
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+              <div className="flex flex-col md:flex-row gap-4">
+                <div className="flex-1 relative">
+                  <input
+                    type="text"
+                    placeholder="ابحث بكود الصنف (Item Code)، الموديل، أو الاسم..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                  />
+                  <div className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400">
+                    <svg
+                      className="w-5 h-5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                      />
+                    </svg>
+                  </div>
+                </div>
+
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  <button
+                    onClick={() => setFilterType("all")}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap border ${
+                      filterType === "all"
+                        ? "bg-gray-800 text-white border-gray-800"
+                        : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+                    }`}
+                  >
+                    الكل
+                  </button>
+                  <button
+                    onClick={() => setFilterType("with-image")}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap border ${
+                      filterType === "with-image"
+                        ? "bg-green-600 text-white border-green-600"
+                        : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+                    }`}
+                  >
+                    ✅ لديه صورة
+                  </button>
+                  <button
+                    onClick={() => setFilterType("no-image")}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap border ${
+                      filterType === "no-image"
+                        ? "bg-red-600 text-white border-red-600"
+                        : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+                    }`}
+                  >
+                    ❌ بدون صورة
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {loadingProducts ? (
+              <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                {[...Array(8)].map((_, i) => (
+                  <div
+                    key={i}
+                    className="bg-white rounded-xl p-4 shadow-sm h-80 animate-pulse"
+                  >
+                    <div className="bg-gray-200 h-48 w-full rounded-lg mb-4"></div>
+                    <div className="bg-gray-200 h-4 w-3/4 rounded mb-2"></div>
+                    <div className="bg-gray-200 h-4 w-1/2 rounded"></div>
                   </div>
                 ))}
               </div>
-            ) : (
-              <div className="text-center py-8">
-                <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                  <span className="text-2xl">🎉</span>
+            ) : items.length > 0 ? (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                  {items.map((item) => {
+                    const isLoading = loadingActionId === item.uniqueKey;
+
+                    return (
+                      <div
+                        key={item.uniqueKey}
+                        className={`bg-white rounded-xl shadow-sm border overflow-hidden group hover:shadow-lg transition-all duration-300 ${
+                          item.hasImage
+                            ? "border-gray-200"
+                            : "border-red-200 bg-red-50/10"
+                        }`}
+                      >
+                        <div className="relative h-56 bg-gray-100 flex items-center justify-center group-hover:bg-gray-200 transition-colors">
+                          {item.hasImage ? (
+                            <div className="relative w-full h-full">
+                              <img
+                                src={item.imageUrl}
+                                alt={item.description}
+                                className="w-full h-full object-contain p-2"
+                              />
+                              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 p-4">
+                                <a
+                                  href={item.imageUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="p-2 bg-white text-gray-800 rounded-full hover:bg-blue-50 transition-colors shadow-lg"
+                                  title="عرض الصورة"
+                                >
+                                  👁️
+                                </a>
+                                <button
+                                  onClick={() => handleDeleteImage(item)}
+                                  className="p-2 bg-white text-red-600 rounded-full hover:bg-red-50 transition-colors shadow-lg"
+                                  title="حذف الصورة"
+                                  disabled={isLoading}
+                                >
+                                  🗑️
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex flex-col items-center text-gray-400">
+                              <svg
+                                className="w-12 h-12 mb-2 opacity-50"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                                />
+                              </svg>
+                              <span className="text-sm font-medium">
+                                لا توجد صورة
+                              </span>
+                            </div>
+                          )}
+
+                          {isLoading && (
+                            <div className="absolute inset-0 bg-white/80 z-20 flex flex-col items-center justify-center">
+                              <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mb-2"></div>
+                              <span className="text-xs font-semibold text-blue-600">
+                                جاري المعالجة...
+                              </span>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="p-4">
+                          <div className="flex justify-between items-start mb-2">
+                            <h3
+                              className="font-bold text-gray-900 line-clamp-1"
+                              title={item.description}
+                            >
+                              {item.description}
+                            </h3>
+                            <span className="text-xs font-medium bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                              {item.color}
+                            </span>
+                          </div>
+
+                          <div className="text-xs text-gray-500 mb-4 space-y-1">
+                            <p>
+                              <strong>Item Code:</strong>{" "}
+                              <span className="font-mono bg-yellow-50 px-1 text-gray-800 border border-yellow-200 rounded">
+                                {item.item_code}
+                              </span>
+                            </p>
+                            <p>Master: {item.master_code}</p>
+                          </div>
+
+                          <div className="relative">
+                            <input
+                              type="file"
+                              accept="image/*"
+                              id={`upload-${item.uniqueKey}`}
+                              className="hidden"
+                              disabled={isLoading}
+                              onChange={(e) => {
+                                if (e.target.files && e.target.files[0]) {
+                                  handleReplaceImage(e.target.files[0], item);
+                                  e.target.value = ""; // Reset
+                                }
+                              }}
+                            />
+                            <label
+                              htmlFor={`upload-${item.uniqueKey}`}
+                              className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-bold cursor-pointer transition-all ${
+                                item.hasImage
+                                  ? "bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200"
+                                  : "bg-green-600 text-white hover:bg-green-700 shadow-md hover:shadow-lg"
+                              } ${
+                                isLoading ? "opacity-50 cursor-not-allowed" : ""
+                              }`}
+                            >
+                              {isLoading ? (
+                                "جاري الرفع..."
+                              ) : item.hasImage ? (
+                                <>🔄 استبدال</>
+                              ) : (
+                                <>📤 رفع صورة</>
+                              )}
+                            </label>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-                <h4 className="text-lg font-medium text-gray-900 mb-2">
-                  أحسنت!
-                </h4>
-                <p className="text-gray-600 text-sm">
-                  جميع المنتجات تحتوي على صور
+
+                <div className="mt-8 flex justify-center items-center gap-4">
+                  <button
+                    onClick={() => handlePageChange(pagination.page - 1)}
+                    disabled={pagination.page <= 1}
+                    className={`px-4 py-2 rounded-lg border ${
+                      pagination.page <= 1
+                        ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                        : "bg-white text-gray-700 hover:bg-gray-50"
+                    }`}
+                  >
+                    ← السابق
+                  </button>
+
+                  <span className="text-gray-600 font-medium">
+                    صفحة {pagination.page} من {pagination.totalPages}
+                  </span>
+
+                  <button
+                    onClick={() => handlePageChange(pagination.page + 1)}
+                    disabled={pagination.page >= pagination.totalPages}
+                    className={`px-4 py-2 rounded-lg border ${
+                      pagination.page >= pagination.totalPages
+                        ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                        : "bg-white text-gray-700 hover:bg-gray-50"
+                    }`}
+                  >
+                    التالي →
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="text-center py-20 bg-white rounded-xl border border-dashed border-gray-300">
+                <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <span className="text-3xl">🔍</span>
+                </div>
+                <h3 className="text-lg font-medium text-gray-900">
+                  لا توجد نتائج
+                </h3>
+                <p className="text-gray-500 mt-1">
+                  جرب البحث بكلمات مختلفة أو تغيير الفلتر.
                 </p>
               </div>
             )}
-
-            {/* نسبة التقدم */}
-            {!loadingProducts && stats.total > 0 && (
-              <div className="mt-6 pt-4 border-t border-gray-200">
-                <div className="mb-2 flex justify-between text-sm">
-                  <span className="text-gray-600">نسبة الإكمال</span>
-                  <span className="font-medium">
-                    {Math.round((stats.withImages / stats.total) * 100)}%
-                  </span>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div
-                    className="bg-green-600 h-2 rounded-full transition-all duration-300"
-                    style={{
-                      width: `${(stats.withImages / stats.total) * 100}%`,
-                    }}
-                  ></div>
-                </div>
-              </div>
-            )}
           </div>
-        </div>
-      </div>
+        )}
+      </main>
     </div>
   );
 }

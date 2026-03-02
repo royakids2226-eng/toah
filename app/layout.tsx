@@ -34,6 +34,20 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // تعريف بيانات الهيكلة (JSON-LD) هنا
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@type": "Store",
+    name: "متجر فوي",
+    description: "متجر فوي لأجمل وأحدث صيحات موضة الأطفال",
+    url: "https://vooy.shop",
+    telephone: "+201016284836",
+    address: {
+      "@type": "PostalAddress",
+      addressCountry: "EG",
+    },
+  };
+
   return (
     <html lang="ar" dir="rtl">
       <head>
@@ -61,24 +75,6 @@ export default function RootLayout({
           content="width=device-width, initial-scale=1, maximum-scale=1"
         />
         <meta name="theme-color" content="#3B82F6" />
-
-        <script
-          type="application/ld+json"
-          dangerouslySetInnerHTML={{
-            __html: JSON.stringify({
-              "@context": "https://schema.org",
-              "@type": "Store",
-              name: "متجر أحلام",
-              description: "متجر أحلام لأجمل وأحدث صيحات موضة الأطفال",
-              url: "https://yourdomain.com",
-              telephone: "+20-123-456-7890",
-              address: {
-                "@type": "PostalAddress",
-                addressCountry: "EG",
-              },
-            }),
-          }}
-        />
       </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-gray-50`}
@@ -90,7 +86,13 @@ export default function RootLayout({
           </ProductsProvider>
         </AuthProvider>
 
-        {/* ✅ إزالة الكود الذي يمنع السكرول */}
+        {/* ✅ تم نقل السكربت هنا لتجنب خطأ Hydration */}
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify(jsonLd),
+          }}
+        />
       </body>
     </html>
   );
