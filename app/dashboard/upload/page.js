@@ -184,6 +184,11 @@ export default function UploadDashboard() {
                 : f
             )
           );
+          
+          // تحديث المعرض بعد رفع الصورة مباشرة
+          if (activeTab === "manage") {
+            setTimeout(() => fetchProducts(true), 1000);
+          }
         } else {
           throw new Error(data.error || "فشل الرفع");
         }
@@ -222,72 +227,97 @@ export default function UploadDashboard() {
         const data = await res.json();
 
         if (data.success && data.products) {
-          console.log("📦 البيانات القادمة من الـ API:", data.products[0]); // للمراجعة في الكونسول
+          console.log("📦 البيانات القادمة من الـ API:", data.products[0]);
 
-          const flatItems = [];
+          const colorItems = [];
 
+          // تجميع حسب اللون
           data.products.forEach((group) => {
-            // ✅ التعامل مع Variants (الألوان/المقاسات)
             if (group.variants && group.variants.length > 0) {
+              // إنشاء خريطة لتجميع الفاريانتات حسب اللون
+              const colorMap = new Map();
+              
               group.variants.forEach((variant) => {
-                // ✅ محاولة استخراج كود الصنف بكل الطرق الممكنة كنص
-                let rawItemCode = variant.item_code || variant.itemCode;
-
-                // إذا لم نجد كود في الفاريانت، نأخذه من الجروب الرئيسي إذا لم يكن هو الماستر كود
-                if (
-                  !rawItemCode &&
-                  group.item_code &&
-                  group.item_code !== group.master_code
-                ) {
-                  rawItemCode = group.item_code;
-                }
-
-                // ✅ تحويل نهائي إلى String، وإذا كان فارغاً نستخدم "N/A" للعرض فقط (لكن نحتفظ بالقيمة الأصلية للمنطق)
-                const itemCodeStr = rawItemCode ? String(rawItemCode) : "N/A";
-
-                flatItems.push({
-                  uniqueKey: variant.id || Math.random().toString(),
-                  id: variant.id,
-                  item_code: itemCodeStr, // هذا هو النص الذي سيظهر
-                  real_item_code: rawItemCode, // القيمة الحقيقية للاستخدام في الرفع
-                  master_code: String(group.master_code || "N/A"),
-                  description: group.description,
-                  color: variant.color,
-                  imageUrl:
-                    variant.imageUrl &&
-                    !variant.imageUrl.includes("placeholder")
+                const color = variant.color || "افتراضي";
+                
+                if (!colorMap.has(color)) {
+                  // هذا أول مقاس لهذا اللون - ننشئ عنصر جديد للون
+                  // ✅ استخدام item_code الخاص باللون (من قاعدة البيانات)
+                  const itemCode = variant.item_code || "";
+                  
+                  colorMap.set(color, {
+                    uniqueKey: `${group.master_code}-${color}`,
+                    master_code: String(group.master_code || "N/A"),
+                    // ✅ هذا هو المفتاح: استخدام item_code الخاص باللون
+                    item_code: itemCode,
+                    // ✅ اسم ملف الصورة (الذي يجب أن يطابق item_code)
+                    imageFileName: variant.imageFileName || itemCode,
+                    description: group.description || group.item_name,
+                    color: color,
+                    imageUrl: variant.imageUrl && !variant.imageUrl.includes("placeholder")
                       ? variant.imageUrl
                       : null,
-                  hasImage: !!(
-                    variant.imageUrl &&
-                    !variant.imageUrl.includes("placeholder")
-                  ),
-                });
+                    hasImage: !!(variant.imageUrl && !variant.imageUrl.includes("placeholder")),
+                    // تخزين كل المقاسات تحت هذا اللون للرجوع إليها
+                    variants: [variant],
+                  });
+                } else {
+                  // أضف هذا المقاس إلى اللون الموجود
+                  const existing = colorMap.get(color);
+                  existing.variants.push(variant);
+                  
+                  // إذا كان هذا المقاس له صورة ولم يكن للون صورة بعد، استخدم صورته
+                  if (!existing.hasImage && variant.imageUrl && !variant.imageUrl.includes("placeholder")) {
+                    existing.imageUrl = variant.imageUrl;
+                    existing.hasImage = true;
+                    
+                    // تحديث item_code إذا كان الصورة تطابق مقاس معين
+                    if (variant.item_code) {
+                      existing.item_code = variant.item_code;
+                    }
+                  }
+                }
               });
+              
+              // تحويل الخريطة إلى مصفوفة
+              colorMap.forEach((colorItem) => {
+                colorItems.push(colorItem);
+              });
+              
             } else {
-              // ✅ التعامل مع المنتجات الفردية
+              // التعامل مع المنتجات الفردية (بدون ألوان)
               const rawItemCode = group.item_code || group.modelId;
               const itemCodeStr = rawItemCode ? String(rawItemCode) : "N/A";
 
-              flatItems.push({
+              colorItems.push({
                 uniqueKey: group.modelId,
                 id: group.modelId,
                 item_code: itemCodeStr,
-                real_item_code: rawItemCode,
                 master_code: String(group.master_code || "N/A"),
-                description: group.description,
+                description: group.description || group.item_name,
                 color: "افتراضي",
                 imageUrl: null,
                 hasImage: false,
+                variants: [],
               });
             }
           });
 
-          let filtered = flatItems;
+          // تطبيق الفلتر
+          let filtered = colorItems;
           if (filterType === "with-image") {
             filtered = filtered.filter((item) => item.hasImage);
           } else if (filterType === "no-image") {
             filtered = filtered.filter((item) => !item.hasImage);
+          }
+
+          // تطبيق البحث
+          if (searchTerm) {
+            filtered = filtered.filter((item) => 
+              item.item_code.toLowerCase().includes(searchTerm.toLowerCase()) ||
+              item.master_code.toLowerCase().includes(searchTerm.toLowerCase()) ||
+              item.description.toLowerCase().includes(searchTerm.toLowerCase())
+            );
           }
 
           setItems(filtered);
@@ -331,7 +361,7 @@ export default function UploadDashboard() {
 
     if (
       !confirm(
-        `هل أنت متأكد من حذف صورة الصنف ${item.item_code} (${item.color})؟`
+        `هل أنت متأكد من حذف صورة اللون ${item.color} (${item.item_code})؟`
       )
     ) {
       return;
@@ -345,8 +375,7 @@ export default function UploadDashboard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           imageUrl: item.imageUrl,
-          // نستخدم الكود الحقيقي (حتى لو كان نصاً) أو ما يظهر للمستخدم
-          productId: String(item.real_item_code || item.item_code),
+          productId: String(item.item_code || item.master_code),
         }),
       });
 
@@ -372,28 +401,26 @@ export default function UploadDashboard() {
     }
   };
 
-  // استبدال صورة
+  // استبدال صورة - مع الحفاظ على نفس الاسم (item_code)
   const handleReplaceImage = async (file, item) => {
     const extension = file.name.substring(file.name.lastIndexOf("."));
 
-    // ✅ الأولوية القصوى لـ item_code النصي
-    let codeToUse = item.real_item_code || item.item_code;
-
-    // إذا كان الكود غير صالح، نستخدم الماستر كود كخيار أخير
-    if (!codeToUse || codeToUse === "N/A" || codeToUse === "null") {
-      codeToUse = item.master_code;
-    }
+    // ✅ استخدام item_code الخاص باللون (الذي هو اسم الصورة على R2)
+    const codeToUse = item.item_code;
 
     if (!codeToUse || codeToUse === "N/A" || codeToUse === "null") {
-      addToast("لا يوجد كود صالح لهذا المنتج لتسمية الصورة", "error");
+      addToast("لا يوجد كود صالح لهذا اللون لتسمية الصورة", "error");
       return;
     }
 
-    // ✅ تنظيف الكود (إزالة المسافات الزائدة) واستخدامه كنص
+    // ✅ تنظيف الكود واستخدامه كاسم للصورة
     const safeCode = String(codeToUse).trim();
-    const newFileName = `${safeCode}${extension}`;
+    // التأكد من أن الامتداد صحيح
+    const safeExtension = extension.startsWith('.') ? extension : `.${extension}`;
+    const newFileName = `${safeCode}${safeExtension}`;
 
-    console.log(`📤 جاري رفع الصورة باسم: ${newFileName}`); // للمراجعة
+    console.log(`📤 جاري رفع الصورة بنفس الاسم: ${newFileName}`);
+    console.log(`📍 هذا سيحل محل الصورة القديمة على الرابط: ${item.imageUrl}`);
 
     const renamedFile = new File([file], newFileName, { type: file.type });
     const formData = new FormData();
@@ -410,8 +437,9 @@ export default function UploadDashboard() {
       const result = await res.json();
 
       if (result.success) {
-        addToast(`تم تحديث صورة ${item.color} بنجاح`, "success");
-        const newImageUrl = result.image?.url;
+        addToast(`تم تحديث صورة اللون ${item.color} بنجاح`, "success");
+        const newImageUrl = result.image?.url || result.results?.[0]?.imageUrl;
+        
         if (newImageUrl) {
           setItems((prev) =>
             prev.map((p) => {
@@ -421,6 +449,9 @@ export default function UploadDashboard() {
               return p;
             })
           );
+          
+          // تحديث الصفحة بعد ثانيتين لرؤية التغييرات
+          setTimeout(() => fetchProducts(true), 2000);
         }
       } else {
         addToast(result.error || "فشل الرفع", "error");
@@ -448,7 +479,7 @@ export default function UploadDashboard() {
               مركز رفع وإدارة الصور
             </h1>
             <p className="text-gray-600 mt-1">
-              إدارة الصور المستضافة على Cloudflare R2، الرفع الجماعي، والحذف.
+              إدارة الصور المستضافة على Cloudflare R2 - كل لون له صورة واحدة فقط
             </p>
           </div>
 
@@ -509,8 +540,9 @@ export default function UploadDashboard() {
                 اسحب وأفلت الصور هنا
               </h3>
               <p className="text-gray-500 mb-6">
-                أو اضغط لاختيار الملفات من جهازك. يفضل تسمية الملفات بكود المنتج
-                (مثلاً: <code>1001.jpg</code>).
+                أو اضغط لاختيار الملفات من جهازك. <span className="font-bold text-blue-600">يجب تسمية الملفات بكود اللون بالضبط</span> (مثلاً: <code className="bg-yellow-100 px-2 py-1 rounded font-bold">3700.jpg</code> لكود اللون 3700).
+                <br />
+                <span className="text-sm text-green-600">✅ عند رفع صورة بنفس الاسم، ستستبدل الصورة القديمة تلقائياً</span>
               </p>
 
               <input
@@ -556,7 +588,7 @@ export default function UploadDashboard() {
                         جاري الرفع...
                       </>
                     ) : (
-                      <>🚀 بدء الرفع</>
+                      <>🚀 بدء الرفع (الملفات التي لها نفس الاسم ستستبدل)</>
                     )}
                   </button>
                 </div>
@@ -603,8 +635,8 @@ export default function UploadDashboard() {
                       <p className="text-xs text-gray-500 mb-2">
                         {formatBytes(file.file.size)}
                         {file.productCode && (
-                          <span className="block text-blue-600 mt-0.5">
-                            كود: {file.productCode}
+                          <span className="block text-blue-600 mt-0.5 font-mono font-bold">
+                            كود اللون: {file.productCode}
                           </span>
                         )}
                       </p>
@@ -669,7 +701,7 @@ export default function UploadDashboard() {
                 <div className="flex-1 relative">
                   <input
                     type="text"
-                    placeholder="ابحث بكود الصنف (Item Code)، الموديل، أو الاسم..."
+                    placeholder="ابحث بكود اللون، الموديل، أو الاسم..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
@@ -828,12 +860,23 @@ export default function UploadDashboard() {
 
                           <div className="text-xs text-gray-500 mb-4 space-y-1">
                             <p>
-                              <strong>Item Code:</strong>{" "}
-                              <span className="font-mono bg-yellow-50 px-1 text-gray-800 border border-yellow-200 rounded">
+                              <strong>كود اللون (اسم الصورة):</strong>{" "}
+                              <span className="font-mono bg-yellow-50 px-1 py-0.5 text-gray-800 border border-yellow-200 rounded font-bold">
                                 {item.item_code}
                               </span>
                             </p>
-                            <p>Master: {item.master_code}</p>
+                            <p>
+                              <strong>المقاسات:</strong>{" "}
+                              {item.variants && item.variants.length > 0 
+                                ? item.variants.map(v => v.size).filter(Boolean).join('، ') 
+                                : "لا يوجد"}
+                            </p>
+                            <p>الكود الرئيسي: {item.master_code}</p>
+                            {item.imageUrl && (
+                              <p className="text-xs text-green-600 break-all">
+                                <strong>الرابط:</strong> {item.imageUrl}
+                              </p>
+                            )}
                           </div>
 
                           <div className="relative">
@@ -863,9 +906,9 @@ export default function UploadDashboard() {
                               {isLoading ? (
                                 "جاري الرفع..."
                               ) : item.hasImage ? (
-                                <>🔄 استبدال</>
+                                <>🔄 استبدال (نفس الاسم: {item.item_code})</>
                               ) : (
-                                <>📤 رفع صورة</>
+                                <>📤 رفع صورة (الاسم: {item.item_code})</>
                               )}
                             </label>
                           </div>

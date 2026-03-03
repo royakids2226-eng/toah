@@ -12,18 +12,13 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const category = searchParams.get("category");
     const search = searchParams.get("search");
-
-    // ✅ التعديل هنا: قراءة الصفحة والحد (Limit)
     const pageParam = searchParams.get("page");
     const limitParam = searchParams.get("limit");
-
-    // إذا لم يتم إرسال limit، نعتبره "غير محدود" (أو رقم كبير جداً) لضمان جلب كل البيانات
-    // هذا يحل مشكلة ظهور 6 صفحات فقط
-    const limit = limitParam ? parseInt(limitParam) : 10000;
-    const page = pageParam ? parseInt(pageParam) : 1;
-
     const employeeView = searchParams.get("employee") === "true";
     const isExport = searchParams.get("export") === "true";
+
+    const limit = limitParam ? parseInt(limitParam) : 10000;
+    const page = pageParam ? parseInt(pageParam) : 1;
 
     const andConditions: any[] = [];
 
@@ -71,14 +66,15 @@ export async function GET(request: Request) {
       return NextResponse.json({ success: true, data: rawProducts });
     }
 
-    // ✅ جلب المنتجات (بدون استخدام take/skip هنا لضمان التجميع الصحيح أولاً)
+    // ✅ جلب المنتجات
     const allProductsRaw = await prisma.products.findMany({
       where: whereConditions,
       orderBy: { unique_id: "desc" },
     });
 
-    // تجميع المنتجات (Logic التجميع)
+    // تجميع المنتجات حسب master_code
     const groupedByMasterCode: { [key: string]: any } = {};
+    
     allProductsRaw.forEach((row) => {
       const masterCode = row.master_code;
       if (!masterCode) return;
@@ -105,26 +101,48 @@ export async function GET(request: Request) {
         (v: any) => v.color === color
       );
 
+      // ✅ استخراج اسم الصورة من الرابط إذا كان موجوداً
+      let imageUrl = row.images || "";
+      // إذا كان الرابط من R2، نستخرج اسم الملف (الذي هو item_code)
+      let imageFileName = "";
+      if (imageUrl && imageUrl.includes('r2.dev')) {
+        const urlParts = imageUrl.split('/');
+        imageFileName = urlParts[urlParts.length - 1];
+        // إزالة الامتداد للحصول على item_code
+        if (imageFileName.includes('.')) {
+          imageFileName = imageFileName.substring(0, imageFileName.lastIndexOf('.'));
+        }
+      }
+
       if (!variant) {
         groupedByMasterCode[masterCode].variants.push({
+          id: row.unique_id,
           color: color,
-          imageUrl: row.images || "/placeholder.jpg",
+          // ✅ استخدام item_code الخاص بهذا اللون (من قاعدة البيانات)
+          item_code: row.item_code || "",
+          // ✅ اسم ملف الصورة (الذي هو item_code)
+          imageFileName: imageFileName,
+          imageUrl: imageUrl,
           sizes: [row.size || "Free"],
           quantities: [quantity],
+          sizeItemCodes: { [row.size || "Free"]: row.item_code || "" },
         });
       } else {
-        variant.sizes.push(row.size || "Free");
+        if (!variant.sizes.includes(row.size || "Free")) {
+          variant.sizes.push(row.size || "Free");
+        }
         variant.quantities.push(quantity);
+        if (row.size) {
+          variant.sizeItemCodes[row.size] = row.item_code || "";
+        }
       }
     });
 
     const allGroupedProducts = Object.values(groupedByMasterCode);
     const totalProducts = allGroupedProducts.length;
 
-    // ✅ تطبيق الترقيم (Pagination) فقط إذا تم طلبه
-    // إذا لم يرسل الفرونت إند limit، فإننا نعيد كل المنتجات
+    // ✅ تطبيق الترقيم
     let paginatedProducts = allGroupedProducts;
-
     if (limitParam) {
       const skip = (page - 1) * limit;
       paginatedProducts = allGroupedProducts.slice(skip, skip + limit);
@@ -135,7 +153,7 @@ export async function GET(request: Request) {
       products: paginatedProducts,
       pagination: {
         page,
-        limit: limitParam ? limit : totalProducts, // إذا لم نحدد حداً، الحد هو الكل
+        limit: limitParam ? limit : totalProducts,
         totalProducts,
         totalPages: limitParam ? Math.ceil(totalProducts / limit) : 1,
       },
@@ -165,8 +183,7 @@ export async function POST(request: Request) {
           unique_id: `PRD-${timestamp}-${random}-${index}`.toUpperCase(),
           item_name: item.item_name?.toString() || "بدون اسم",
           master_code: item.master_code?.toString() || "",
-          item_code:
-            item.item_code?.toString() || `${item.master_code}-${index}`,
+          item_code: item.item_code?.toString() || `${item.master_code}-${index}`,
           out_price: parseFloat(item.out_price) || 0,
           cur_qty: parseInt(item.cur_qty) || 0,
           color: item.color?.toString() || "Default",
@@ -175,7 +192,6 @@ export async function POST(request: Request) {
           kind_name: item.kind_name?.toString() || "عام",
           images: item.images?.toString() || "",
           stor_id: 0,
-          // Defaults
           type_id: 0,
           item_id: 0,
           unit_id: 0,
@@ -218,7 +234,6 @@ export async function POST(request: Request) {
           out_price: parseFloat(body.out_price),
           cur_qty: parseInt(body.cur_qty),
           stor_id: 0,
-          // Defaults
           type_id: 0,
           item_id: 0,
           unit_id: 0,
