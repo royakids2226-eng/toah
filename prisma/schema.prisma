@@ -105,3 +105,9 @@ model company_info {
   created_at      DateTime @default(now())
   updated_at      DateTime @updatedAt
 }
+// أضف هذا الموديل في نهاية الملف
+model visitor_stats {
+  id    Int      @id @default(autoincrement())
+  date  DateTime @unique @default(now()) @db.Date // لتخزين التاريخ فقط ومنع التكرار لنفس اليوم
+  count Int      @default(0)
+}

@@ -4,6 +4,8 @@ import "./globals.css";
 import { CartProvider } from "../context/CartContext";
 import { ProductsProvider } from "./../context/ProductsContext";
 import { AuthProvider } from "./../context/AuthContext";
+// 1. استيراد المكون الجديد
+import VisitorTracker from "./components/VisitorTracker";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -34,7 +36,6 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  // تعريف بيانات الهيكلة (JSON-LD) هنا
   const jsonLd = {
     "@context": "https://schema.org",
     "@type": "Store",
@@ -82,11 +83,14 @@ export default function RootLayout({
       >
         <AuthProvider>
           <ProductsProvider>
-            <CartProvider>{children}</CartProvider>
+            <CartProvider>
+              {/* 2. إضافة المكون هنا ليقوم بعد الزوار */}
+              <VisitorTracker />
+              {children}
+            </CartProvider>
           </ProductsProvider>
         </AuthProvider>
 
-        {/* ✅ تم نقل السكربت هنا لتجنب خطأ Hydration */}
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{

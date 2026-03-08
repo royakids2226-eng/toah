@@ -17,6 +17,7 @@ export default function Dashboard() {
     productsWithImages: 0,
     productsWithoutImages: 0,
     categoriesCount: 0,
+    visitorCount: 0, // ✅ تمت الإضافة: حالة جديدة لعدد الزوار
   });
 
   useEffect(() => {
@@ -55,12 +56,14 @@ export default function Dashboard() {
   const fetchStats = async () => {
     try {
       // جلب إحصائيات حقيقية
-      const [productsRes, usersRes, imagesStatsRes, categoriesRes] =
+      // ✅ تمت الإضافة: جلب عدد الزوار ضمن الـ Promise
+      const [productsRes, usersRes, imagesStatsRes, categoriesRes, visitorsRes] =
         await Promise.all([
           fetch("/api/products"),
           fetch("/api/users"),
           fetch("/api/match-images"), // جلب إحصائيات الصور
           fetch("/api/categories"), // جلب التصنيفات
+          fetch("/api/visitors"), // ✅ جلب عدد الزوار
         ]);
 
       const productsData = await productsRes.json();
@@ -69,6 +72,8 @@ export default function Dashboard() {
         ? await imagesStatsRes.json()
         : { statistics: {} };
       const categoriesData = categoriesRes.ok ? await categoriesRes.json() : [];
+      // ✅ معالجة بيانات الزوار
+      const visitorsData = visitorsRes.ok ? await visitorsRes.json() : { total: 0 };
 
       const products = productsData.products || [];
       const productsWithImages = products.filter((p) => p.images).length;
@@ -81,6 +86,7 @@ export default function Dashboard() {
         productsWithImages: productsWithImages,
         productsWithoutImages: products.length - productsWithImages,
         categoriesCount: categoriesData.length,
+        visitorCount: visitorsData.total, // ✅ تحديث الحالة
         ...imagesStatsData.statistics,
       });
     } catch (error) {
@@ -222,7 +228,25 @@ export default function Dashboard() {
         </div>
 
         {/* إحصائيات سريعة - بيانات حقيقية */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        {/* ✅ تم التعديل هنا: زيادة عدد الأعمدة لاستيعاب بطاقة الزوار */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
+          
+          {/* ✅ بطاقة عدد الزوار الجديدة */}
+          <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200 hover:shadow-md transition-shadow">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-600">إجمالي الزوار</p>
+                <p className="text-2xl font-bold text-indigo-600">
+                  {stats.visitorCount ? stats.visitorCount.toLocaleString('ar-EG') : 0}
+                </p>
+                <p className="text-xs text-gray-500 mt-1">زيارة للموقع</p>
+              </div>
+              <div className="w-12 h-12 bg-indigo-100 rounded-lg flex items-center justify-center">
+                <span className="text-2xl">👀</span>
+              </div>
+            </div>
+          </div>
+
           <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200 hover:shadow-md transition-shadow">
             <div className="flex items-center justify-between">
               <div>
@@ -277,7 +301,7 @@ export default function Dashboard() {
                 </p>
                 <p className="text-xs text-gray-500 mt-1">تصنيف في المتجر</p>
               </div>
-              <div className="w-12 h-12 bg-indigo-100 rounded-lg flex items-center justify-center">
+              <div className="w-12 h-12 bg-pink-100 rounded-lg flex items-center justify-center">
                 <span className="text-2xl">📁</span>
               </div>
             </div>
